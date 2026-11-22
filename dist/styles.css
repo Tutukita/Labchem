@@ -113,3 +113,5 @@
 .card-row{border:1px dashed transparent;border-radius:5px;padding:4px;transition:.15s}
 .card-row.return-target{border-color:#526f28;background:#e8f3bd;box-shadow:inset 0 0 0 2px rgba(82,111,40,.18)}
 .card-row.return-target:after{content:'SOLTAR PARA DEVOLVER';align-self:center;color:#526f28;font:700 7px 'DM Mono'}
+
+.connection-note{margin-top:18px;color:#617167;font-size:12px;min-height:18px}.connection-note.error{color:#a13f35}.panel-heading #connection-status{font-size:8px;color:#5d7e48}
