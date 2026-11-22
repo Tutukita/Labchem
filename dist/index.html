@@ -16,7 +16,7 @@
       <h1 id="game-title">Laboratorio<br>de Moléculas</h1>
       <p class="intro">Construí, reaccioná e investigá. Cada unión cuenta.</p>
       <label for="player-name">Tu nombre</label>
-      <input id="player-name" maxlength="18" value="Andrea" autocomplete="name">
+      <input id="player-name" maxlength="18" placeholder="Escribí tu nombre" autocomplete="name">
       <div class="lobby-actions">
         <button id="create-room" class="primary">Crear sala privada <span>→</span></button>
         <button id="show-join" class="secondary">Ingresar con código</button>
@@ -28,7 +28,7 @@
           <button id="join-room" class="small-primary">Entrar</button>
         </div>
       </div>
-      <p id="connection-note" class="connection-note">Sala directa entre navegadores · 2 jugadores</p>
+      <p id="connection-note" class="connection-note">Sala online con reconexión · 2 jugadores</p>
     </section>
     <aside class="lobby-art" aria-label="Ilustración de una mesa de laboratorio">
       <div class="formula f1">H—C≡N</div>
@@ -36,7 +36,6 @@
       <div class="flask flask-one"><div class="liquid"></div></div>
       <div class="flask flask-two"><div class="liquid"></div></div>
       <div class="bubble b1"></div><div class="bubble b2"></div><div class="bubble b3"></div>
-      <p>Una mesa compartida.<br>Muchas formas de ganar.</p>
     </aside>
   </div>
 
@@ -117,6 +116,7 @@
 
   <dialog id="modal" class="modal"><div id="modal-content"></div><button id="close-modal" class="modal-close" aria-label="Cerrar">×</button></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="config.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
   <script src="app.js"></script>
 </body>

@@ -4,17 +4,17 @@ Prototipo jugable del juego de mesa **Laboratorio de Moléculas**, pensado para 
 
 ## Probar el juego
 
-La versión publicada con GitHub Pages se abre directamente desde el navegador, sin instalación.
+La versión publicada con GitHub Pages se abre directamente desde el navegador, sin instalación. Esa versión conserva la conexión directa entre navegadores como compatibilidad.
 
-> Estado actual: modo online experimental para dos jugadores. El anfitrión debe mantener la pestaña abierta durante toda la partida.
+Para partidas con reconexión, usá el servidor Node incluido en este repositorio.
 
 ## Modo online
 
 1. Una persona elige **Crear sala privada** y comparte el código `LAB-0000`.
 2. La otra abre el mismo enlace, elige **Ingresar con código** y escribe ese código.
-3. La mesa, los turnos y las manos individuales se sincronizan directamente entre ambos navegadores.
+3. La mesa, los turnos y las manos individuales se sincronizan a través del servidor.
 
-La conexión usa WebRTC y el servicio público de señalización de PeerJS. Es apropiada para pruebas con amigos; una versión estable necesitará un servidor propio, reconexión y validación autoritativa de jugadas.
+El servidor mantiene el estado más reciente de cada sala y permite que un jugador recargue la página y vuelva a entrar automáticamente. Las reglas todavía son validadas por el navegador anfitrión: este backend está pensado para probar el juego con amigos, no para partidas competitivas públicas.
 
 ## Funciones incluidas
 
@@ -27,25 +27,47 @@ La conexión usa WebRTC y el servicio público de señalización de PeerJS. Es a
 - Investigaciones y objetivos comerciales.
 - Economía, puntos de victoria y contaminación.
 
-## Ejecutar localmente
+## Ejecutar frontend y backend localmente
 
-El juego no necesita instalación ni compilación. Serví la carpeta `dist` con cualquier servidor web estático y abrí `index.html`.
-
-Ejemplo:
+Requiere Node.js 20 o posterior. Desde la carpeta del proyecto ejecutá:
 
 ```bash
-python -m http.server 4175 --directory dist
+npm install
+npm start
 ```
 
-Después visitá `http://localhost:4175`.
+Después visitá `http://localhost:4175`. El mismo proceso sirve el juego y acepta las conexiones WebSocket en `/ws`. El estado del servicio se puede consultar en `/health`.
+
+## Hospedarlo
+
+Subí el repositorio a un proveedor que ejecute Node.js y admita WebSockets. Configurá:
+
+- Comando de instalación: `npm install`
+- Comando de inicio: `npm start`
+- Puerto: la variable `PORT` que entregue el proveedor
+- Comprobación de salud: `/health`
+
+No hace falta separar frontend y backend: el servidor entrega la carpeta `dist` y usa el mismo dominio para `/ws`. Una vez desplegado, compartí la URL pública con ambos jugadores.
+
+También se incluye `render.yaml` como ejemplo para Render. Si preferís mantener el frontend en GitHub Pages y alojar solamente el backend, definí la URL pública WebSocket en `dist/config.js`, por ejemplo:
+
+```js
+window.LABCHEM_SERVER_URL = 'wss://tu-servidor.example/ws';
+```
+
+Las salas se guardan en memoria. Sobreviven a una recarga o una desconexión breve de los jugadores, pero se pierden cuando el servidor se reinicia o vuelve a desplegarse. Las salas vacías vencen luego de dos horas.
 
 ## Estructura
 
 - `dist/index.html`: estructura de la interfaz.
 - `dist/styles.css`: diseño visual y grillas.
 - `dist/app.js`: reglas y comportamiento del prototipo.
+- `dist/config.js`: URL opcional del backend cuando se hospeda por separado.
+- `server/index.js`: servidor HTTP, salas y sincronización WebSocket.
+- `package.json`: dependencias y comandos del servidor.
+- `render.yaml`: ejemplo de despliegue.
 - `.github/workflows/deploy-pages.yml`: publicación automática en GitHub Pages.
 
 ## Próximo objetivo
 
-Agregar un servidor compartido para que las salas privadas sincronicen turnos y partidas reales entre distintos dispositivos.
+Persistir las partidas en una base de datos y trasladar la validación de reglas al servidor.

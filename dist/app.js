@@ -17,7 +17,7 @@ const state = {
     D:{atoms:[{id:4,element:'N',row:5,col:5,pending:false}],bonds:[],pending:0}
   },
   players: [
-    {name:'Andrea', color:'#315c45', credits:0, pv:0, pollution:0, flasks:[null,null,null]},
+    {name:'Jugador 1', color:'#315c45', credits:0, pv:0, pollution:0, flasks:[null,null,null]},
     {name:'Martín', color:'#bd6d55', credits:4, pv:5, pollution:1, flasks:['H—C≡N','O=C=O','vacío']},
     {name:'Sofi', color:'#688aa2', credits:2, pv:6, pollution:0, flasks:['H₂C=O','vacío','vacío']},
     {name:'Leo', color:'#a18454', credits:6, pv:3, pollution:2, flasks:['CH₃—C≡N','H₂O','vacío']}
@@ -27,7 +27,7 @@ const state = {
     {name:'Acetonitrilo', formula:'CH₃—C≡N', pv:6}
   ]
 };
-const network = {role:'offline',playerIndex:0,peer:null,connection:null,connected:false,applyingRemote:false,joinAttempts:0,joinTimer:null};
+const network = {role:'offline',playerIndex:0,transport:'direct',peer:null,connection:null,socket:null,token:null,connected:false,applyingRemote:false,joinAttempts:0,joinTimer:null,reconnectAttempts:0,manualClose:false};
 
 function starterResearch(){return [{name:'Ácido metanoico',formula:'H—C(=O)—OH',pv:6},{name:'Acetonitrilo',formula:'CH₃—C≡N',pv:6}]}
 function createPlayer(name,color,connected=true){return {name,color,connected,credits:0,pv:0,pollution:0,flasks:[null,null,null],atoms:['C','O','H'],bonds:['—','—','═'],research:starterResearch()}}
@@ -39,11 +39,15 @@ function myResearch(){return me().research||(me().research=[])}
 function gameReady(){return network.connected&&state.players.filter(p=>p.connected!==false).length===2}
 function snapshot(){return JSON.parse(JSON.stringify(state))}
 function persist(){localStorage.setItem('labchem-mvp-state',JSON.stringify(state))}
-function sendState(){if(network.role==='host'&&network.connection&&network.connection.open)network.connection.send({type:'state',state:snapshot()})}
+function useRoomServer(){return Boolean(window.LABCHEM_SERVER_URL)||(!location.hostname.endsWith('github.io')&&/^https?:$/.test(location.protocol))}
+function roomServerUrl(){if(window.LABCHEM_SERVER_URL)return window.LABCHEM_SERVER_URL;return (location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws'}
+function networkOpen(){return network.transport==='server'?Boolean(network.socket&&network.socket.readyState===WebSocket.OPEN):Boolean(network.connection&&network.connection.open)}
+function sendNetwork(data){if(!networkOpen())return false;if(network.transport==='server')network.socket.send(JSON.stringify({type:'relay',data}));else network.connection.send(data);return true}
+function sendState(){if(network.role==='host'&&networkOpen())sendNetwork({type:'state',state:snapshot()})}
 function applyRemoteState(next){network.applyingRemote=true;Object.keys(state).forEach(k=>delete state[k]);Object.assign(state,JSON.parse(JSON.stringify(next)));persist();lobby.hidden=true;game.hidden=false;render();network.applyingRemote=false}
 function peerIdForRoom(code){return 'labchem-'+String(code).toLowerCase().replace(/[^a-z0-9-]/g,'')}
 function setLobbyMessage(message,isError=false){const note=$('#connection-note');if(note){note.textContent=message;note.classList.toggle('error',isError)}}
-function destroyNetwork(){clearTimeout(network.joinTimer);network.joinTimer=null;network.joinAttempts=0;try{if(network.connection)network.connection.close()}catch(error){}try{if(network.peer)network.peer.destroy()}catch(error){}network.connection=null;network.peer=null;network.connected=false}
+function destroyNetwork(){network.manualClose=true;clearTimeout(network.joinTimer);network.joinTimer=null;network.joinAttempts=0;network.reconnectAttempts=0;try{if(network.connection)network.connection.close()}catch(error){}try{if(network.peer)network.peer.destroy()}catch(error){}try{if(network.socket)network.socket.close()}catch(error){}network.connection=null;network.peer=null;network.socket=null;network.token=null;network.connected=false;network.manualClose=false}
 
 function connectToOnlineRoom(peer,code){
   network.joinAttempts+=1;
@@ -60,19 +64,70 @@ function retryOnlineRoom(peer,code){
   network.joinTimer=setTimeout(function(){if(network.peer===peer&&!peer.destroyed)connectToOnlineRoom(peer,code)},900*network.joinAttempts);
 }
 
+function handleNetworkData(data){
+  if(!data||typeof data!=='object')return;
+  if(network.role==='host'&&data.type==='join'){state.players[1]=createPlayer(String(data.name||'Jugador 2').slice(0,18),'#688aa2',true);network.connected=true;render();persist();sendState();toast(state.players[1].name+' se unió a la sala.');return}
+  if(network.role==='guest'&&data.type==='state'){network.connected=true;applyRemoteState(data.state);toast('Sala sincronizada. Ya pueden jugar.');return}
+  if(data.type==='approval-request'){showApprovalPrompt(data);return}
+  if(data.type==='approval-response'){handleApprovalResponse(data);return}
+  if(network.role==='host'&&data.type==='proposal'&&state.active===1){applyRemoteState(data.state);sendState()}
+}
+
 function attachConnection(connection){
   network.connection=connection;
   connection.on('open',function(){if(network.role==='guest'){setLobbyMessage('Conectado. Sincronizando la mesa…');connection.send({type:'join',name:$('#player-name').value.trim()||'Jugador 2'})}});
-  connection.on('data',function(data){
-    if(!data||typeof data!=='object')return;
-    if(network.role==='host'&&data.type==='join'){state.players[1]=createPlayer(String(data.name||'Jugador 2').slice(0,18),'#688aa2',true);network.connected=true;render();persist();sendState();toast(state.players[1].name+' se unió a la sala.');return}
-    if(network.role==='guest'&&data.type==='state'){network.connected=true;applyRemoteState(data.state);toast('Sala sincronizada. Ya pueden jugar.');return}
-    if(data.type==='approval-request'){showApprovalPrompt(data);return}
-    if(data.type==='approval-response'){handleApprovalResponse(data);return}
-    if(network.role==='host'&&data.type==='proposal'&&state.active===1){applyRemoteState(data.state);sendState()}
-  });
+  connection.on('data',handleNetworkData);
   connection.on('close',function(){network.connected=false;if(state.players[1])state.players[1].connected=false;render();toast('La otra persona se desconectó.')});
   connection.on('error',function(){toast('Hubo un problema en la conexión.')});
+}
+
+function rememberServerSession(){if(network.token)localStorage.setItem('labchem-room-session',JSON.stringify({room:state.room,token:network.token,role:network.role}))}
+function forgetServerSession(){localStorage.removeItem('labchem-room-session')}
+
+function scheduleServerResume(){
+  if(network.manualClose||!network.token||network.reconnectAttempts>=6)return;
+  network.reconnectAttempts+=1;
+  clearTimeout(network.joinTimer);
+  network.joinTimer=setTimeout(function(){connectRoomServer('resume',state.room)},Math.min(5000,600*network.reconnectAttempts));
+}
+
+function handleServerMessage(message){
+  if(message.type==='room-created'){
+    network.playerIndex=0;network.token=message.token;network.reconnectAttempts=0;rememberServerSession();
+    lobby.hidden=true;game.hidden=false;render();persist();toast('Sala creada en el servidor. Compartí el código '+state.room+'.');return;
+  }
+  if(message.type==='room-joined'){
+    network.playerIndex=1;network.token=message.token;network.reconnectAttempts=0;rememberServerSession();setLobbyMessage('Conectado. Sincronizando la mesa…');return;
+  }
+  if(message.type==='room-resumed'){
+    network.playerIndex=message.playerIndex;network.token=message.token;network.connected=Boolean(message.connected);network.reconnectAttempts=0;rememberServerSession();
+    if(message.state)applyRemoteState(message.state);else{lobby.hidden=true;game.hidden=false;render()}
+    toast('Conexión recuperada.');return;
+  }
+  if(message.type==='relay'){handleNetworkData(message.data);return}
+  if(message.type==='peer-disconnected'){
+    network.connected=false;if(state.players[message.playerIndex])state.players[message.playerIndex].connected=false;render();toast('La otra persona se desconectó. La sala queda guardada para reconectarse.');return;
+  }
+  if(message.type==='peer-reconnected'){
+    network.connected=true;if(state.players[message.playerIndex])state.players[message.playerIndex].connected=true;render();if(network.role==='host')sendState();toast('La otra persona volvió a conectarse.');return;
+  }
+  if(message.type==='room-error'){
+    setLobbyMessage(message.message||'No se pudo abrir la sala.',true);if(message.code==='room-missing'||message.code==='invalid-session')forgetServerSession();
+  }
+}
+
+function connectRoomServer(mode,code){
+  network.transport='server';network.manualClose=false;
+  const socket=new WebSocket(roomServerUrl());network.socket=socket;
+  setLobbyMessage(mode==='create'?'Creando sala en el servidor…':mode==='join'?'Buscando la sala '+code+'…':'Recuperando la sala '+code+'…');
+  socket.addEventListener('open',function(){
+    if(mode==='create')socket.send(JSON.stringify({type:'create',code,name:$('#player-name').value.trim()||'Jugador 1',state:snapshot()}));
+    else if(mode==='join')socket.send(JSON.stringify({type:'join',code,name:$('#player-name').value.trim()||'Jugador 2'}));
+    else socket.send(JSON.stringify({type:'resume',code,token:network.token}));
+  });
+  socket.addEventListener('message',function(event){let message;try{message=JSON.parse(event.data)}catch{return}handleServerMessage(message)});
+  socket.addEventListener('close',function(){if(network.socket!==socket)return;network.socket=null;network.connected=false;if(!network.manualClose){toast('Se perdió la conexión. Intentando recuperar la sala…');scheduleServerResume()}});
+  socket.addEventListener('error',function(){if(mode!=='resume')setLobbyMessage('No se pudo conectar con el servidor de salas. Revisá que esté encendido.',true)});
 }
 
 
@@ -80,11 +135,11 @@ function approvalLabel(kind){
   return kind==='end-turn'?'FIN DE TURNO':kind==='capture'?'CAPTURA DE MOLÉCULA':'PRODUCTO DE REACCIÓN';
 }
 function requestOtherApproval(kind,payload){
-  if(!network.connected||!network.connection||!network.connection.open)return toast('La otra persona debe estar conectada para aprobar.');
+  if(!network.connected||!networkOpen())return toast('La otra persona debe estar conectada para aprobar.');
   network.pendingApproval={kind,payload};
   content.innerHTML='<div class="approval"><div class="seal">⌛</div><p class="eyebrow">ESPERANDO APROBACIÓN</p><h2>'+approvalLabel(kind)+'</h2><p>La solicitud fue enviada a '+state.players[state.active===0?1:0].name+'. La partida continuará cuando responda.</p></div>';
   modal.showModal();
-  network.connection.send({type:'approval-request',kind,payload,requester:me().name});
+  sendNetwork({type:'approval-request',kind,payload,requester:me().name});
 }
 function showApprovalPrompt(data){
   const detail=data.kind==='end-turn'
@@ -94,8 +149,8 @@ function showApprovalPrompt(data){
       :'Revisá el producto '+data.payload.formula+' y la conservación de sus '+data.payload.atomCount+' átomos.';
   content.innerHTML='<div class="approval"><div class="seal">?</div><p class="eyebrow">TU DECISIÓN</p><h2>'+approvalLabel(data.kind)+'</h2><p>'+data.requester+' solicita aprobación. '+detail+'</p><div class="approval-actions"><button id="reject-online" class="secondary">Rechazar</button><button id="approve-online" class="primary">Aprobar</button></div></div>';
   modal.showModal();
-  $('#approve-online').onclick=function(){network.connection.send({type:'approval-response',kind:data.kind,approved:true});modal.close();toast('Aprobación enviada.')};
-  $('#reject-online').onclick=function(){network.connection.send({type:'approval-response',kind:data.kind,approved:false});modal.close();toast('Rechazo enviado.')};
+  $('#approve-online').onclick=function(){sendNetwork({type:'approval-response',kind:data.kind,approved:true});modal.close();toast('Aprobación enviada.')};
+  $('#reject-online').onclick=function(){sendNetwork({type:'approval-response',kind:data.kind,approved:false});modal.close();toast('Rechazo enviado.')};
 }
 function handleApprovalResponse(data){
   const pending=network.pendingApproval;
@@ -112,6 +167,8 @@ function createOnlineRoom(){
   state.players=[createPlayer($('#player-name').value.trim()||'Jugador 1','#315c45'),createPlayer('Esperando jugador…','#688aa2',false)];
   state.active=0;state.phase='choice';state.selectedAtom=null;state.selectedBond=null;state.movingToken=null;
   setLobbyMessage('Creando sala…');
+  if(useRoomServer()){connectRoomServer('create',state.room);return}
+  network.transport='direct';
   const peer=new Peer(peerIdForRoom(state.room),{debug:1});network.peer=peer;
   peer.on('open',function(){lobby.hidden=true;game.hidden=false;render();persist();toast('Sala creada. Compartí el código '+state.room+' y mantené esta pestaña abierta.')});
   peer.on('connection',function(connection){if(network.connection&&network.connection.open){connection.close();return}attachConnection(connection)});
@@ -122,6 +179,8 @@ function joinOnlineRoom(){
   const code=($('#room-input').value||'').trim().toUpperCase();
   if(!/^LAB-\d{4}$/.test(code))return setLobbyMessage('Ingresá un código con el formato LAB-1234.',true);
   destroyNetwork();network.role='guest';network.playerIndex=1;state.room=code;setLobbyMessage('Buscando la sala '+code+'…');
+  if(useRoomServer()){connectRoomServer('join',code);return}
+  network.transport='direct';
   const peer=new Peer(undefined,{debug:1});network.peer=peer;
   peer.on('open',function(){connectToOnlineRoom(peer,code)});
   peer.on('error',function(error){
@@ -134,12 +193,20 @@ function joinOnlineRoom(){
 }
 
 
-function save(){persist();if(network.applyingRemote||!network.connected||!network.connection||!network.connection.open)return;if(network.role==='host')sendState();else network.connection.send({type:'proposal',state:snapshot(),playerIndex:network.playerIndex});}
+function save(){persist();if(network.applyingRemote||!network.connected||!networkOpen())return;if(network.role==='host')sendState();else sendNetwork({type:'proposal',state:snapshot(),playerIndex:network.playerIndex});}
 function randomOf(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 function roomCode(){return 'LAB-'+Math.floor(1000+Math.random()*9000);}
 function toast(message){ const t=$('#toast'); t.textContent=message; t.classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>t.classList.remove('show'),2300); }
 
 function enterRoom(code){if(code)joinOnlineRoom();else createOnlineRoom();}
+
+function resumeSavedRoom(){
+  if(!useRoomServer())return;
+  let saved;try{saved=JSON.parse(localStorage.getItem('labchem-room-session')||'null')}catch{return}
+  if(!saved||!saved.room||!saved.token||!['host','guest'].includes(saved.role))return;
+  network.role=saved.role;network.playerIndex=saved.role==='host'?0:1;network.token=saved.token;state.room=saved.room;
+  connectRoomServer('resume',saved.room);
+}
 
 function render(){
   $('#room-code').textContent=state.room;
@@ -614,3 +681,4 @@ document.querySelectorAll('.sell-button').forEach(b=>b.addEventListener('click',
 modal.addEventListener('click',(e)=>{if(e.target===modal)modal.close();});
 
 render();
+resumeSavedRoom();
