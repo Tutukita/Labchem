@@ -27,7 +27,7 @@ const state = {
     {name:'Acetonitrilo', formula:'CH₃—C≡N', pv:6}
   ]
 };
-const network = {role:'offline',playerIndex:0,peer:null,connection:null,connected:false,applyingRemote:false};
+const network = {role:'offline',playerIndex:0,peer:null,connection:null,connected:false,applyingRemote:false,joinAttempts:0,joinTimer:null};
 
 function starterResearch(){return [{name:'Ácido metanoico',formula:'H—C(=O)—OH',pv:6},{name:'Acetonitrilo',formula:'CH₃—C≡N',pv:6}]}
 function createPlayer(name,color,connected=true){return {name,color,connected,credits:0,pv:0,pollution:0,flasks:[null,null,null],atoms:['C','O','H'],bonds:['—','—','═'],research:starterResearch()}}
@@ -43,7 +43,22 @@ function sendState(){if(network.role==='host'&&network.connection&&network.conne
 function applyRemoteState(next){network.applyingRemote=true;Object.keys(state).forEach(k=>delete state[k]);Object.assign(state,JSON.parse(JSON.stringify(next)));persist();lobby.hidden=true;game.hidden=false;render();network.applyingRemote=false}
 function peerIdForRoom(code){return 'labchem-'+String(code).toLowerCase().replace(/[^a-z0-9-]/g,'')}
 function setLobbyMessage(message,isError=false){const note=$('#connection-note');if(note){note.textContent=message;note.classList.toggle('error',isError)}}
-function destroyNetwork(){try{if(network.connection)network.connection.close()}catch(error){}try{if(network.peer)network.peer.destroy()}catch(error){}network.connection=null;network.peer=null;network.connected=false}
+function destroyNetwork(){clearTimeout(network.joinTimer);network.joinTimer=null;network.joinAttempts=0;try{if(network.connection)network.connection.close()}catch(error){}try{if(network.peer)network.peer.destroy()}catch(error){}network.connection=null;network.peer=null;network.connected=false}
+
+function connectToOnlineRoom(peer,code){
+  network.joinAttempts+=1;
+  setLobbyMessage(network.joinAttempts===1?'Buscando la sala '+code+'…':'Reintentando conexión con '+code+' ('+network.joinAttempts+'/4)…');
+  attachConnection(peer.connect(peerIdForRoom(code),{reliable:true,serialization:'json'}));
+}
+
+function retryOnlineRoom(peer,code){
+  if(network.connected||network.joinAttempts>=4){
+    setLobbyMessage('Esa sala no está activa. El anfitrión debe crear una sala nueva y mantener su pestaña abierta sin recargarla.',true);
+    return;
+  }
+  clearTimeout(network.joinTimer);
+  network.joinTimer=setTimeout(function(){if(network.peer===peer&&!peer.destroyed)connectToOnlineRoom(peer,code)},900*network.joinAttempts);
+}
 
 function attachConnection(connection){
   network.connection=connection;
@@ -98,7 +113,7 @@ function createOnlineRoom(){
   state.active=0;state.phase='choice';state.selectedAtom=null;state.selectedBond=null;state.movingToken=null;
   setLobbyMessage('Creando sala…');
   const peer=new Peer(peerIdForRoom(state.room),{debug:1});network.peer=peer;
-  peer.on('open',function(){lobby.hidden=true;game.hidden=false;render();persist();toast('Sala creada. Compartí el código '+state.room+'.')});
+  peer.on('open',function(){lobby.hidden=true;game.hidden=false;render();persist();toast('Sala creada. Compartí el código '+state.room+' y mantené esta pestaña abierta.')});
   peer.on('connection',function(connection){if(network.connection&&network.connection.open){connection.close();return}attachConnection(connection)});
   peer.on('error',function(error){setLobbyMessage(error&&error.type==='unavailable-id'?'Ese código ya está ocupado. Probá crear otra sala.':'No se pudo abrir la sala.',true);toast('No se pudo iniciar la conexión online.')});
 }
@@ -108,8 +123,14 @@ function joinOnlineRoom(){
   if(!/^LAB-\d{4}$/.test(code))return setLobbyMessage('Ingresá un código con el formato LAB-1234.',true);
   destroyNetwork();network.role='guest';network.playerIndex=1;state.room=code;setLobbyMessage('Buscando la sala '+code+'…');
   const peer=new Peer(undefined,{debug:1});network.peer=peer;
-  peer.on('open',function(){attachConnection(peer.connect(peerIdForRoom(code),{reliable:true,serialization:'json'}))});
-  peer.on('error',function(){setLobbyMessage('No encontramos esa sala o la conexión fue interrumpida.',true)});
+  peer.on('open',function(){connectToOnlineRoom(peer,code)});
+  peer.on('error',function(error){
+    if(error&&error.type==='peer-unavailable'){retryOnlineRoom(peer,code);return}
+    const message=error&&error.type==='network'
+      ?'No se pudo contactar el servicio de salas. Revisá tu conexión a internet e intentá otra vez.'
+      :'La conexión online fue interrumpida. Intentá nuevamente con una sala nueva.';
+    setLobbyMessage(message,true);
+  });
 }
 
 
