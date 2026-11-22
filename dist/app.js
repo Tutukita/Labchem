@@ -52,10 +52,44 @@ function attachConnection(connection){
     if(!data||typeof data!=='object')return;
     if(network.role==='host'&&data.type==='join'){state.players[1]=createPlayer(String(data.name||'Jugador 2').slice(0,18),'#688aa2',true);network.connected=true;render();persist();sendState();toast(state.players[1].name+' se unió a la sala.');return}
     if(network.role==='guest'&&data.type==='state'){network.connected=true;applyRemoteState(data.state);toast('Sala sincronizada. Ya pueden jugar.');return}
+    if(data.type==='approval-request'){showApprovalPrompt(data);return}
+    if(data.type==='approval-response'){handleApprovalResponse(data);return}
     if(network.role==='host'&&data.type==='proposal'&&state.active===1){applyRemoteState(data.state);sendState()}
   });
   connection.on('close',function(){network.connected=false;if(state.players[1])state.players[1].connected=false;render();toast('La otra persona se desconectó.')});
   connection.on('error',function(){toast('Hubo un problema en la conexión.')});
+}
+
+
+function approvalLabel(kind){
+  return kind==='end-turn'?'FIN DE TURNO':kind==='capture'?'CAPTURA DE MOLÉCULA':'PRODUCTO DE REACCIÓN';
+}
+function requestOtherApproval(kind,payload){
+  if(!network.connected||!network.connection||!network.connection.open)return toast('La otra persona debe estar conectada para aprobar.');
+  network.pendingApproval={kind,payload};
+  content.innerHTML='<div class="approval"><div class="seal">⌛</div><p class="eyebrow">ESPERANDO APROBACIÓN</p><h2>'+approvalLabel(kind)+'</h2><p>La solicitud fue enviada a '+state.players[state.active===0?1:0].name+'. La partida continuará cuando responda.</p></div>';
+  modal.showModal();
+  network.connection.send({type:'approval-request',kind,payload,requester:me().name});
+}
+function showApprovalPrompt(data){
+  const detail=data.kind==='end-turn'
+    ?'Revisá las fichas colocadas y las uniones del turno.'
+    :data.kind==='capture'
+      ?'Revisá la molécula '+data.payload.formula+' antes de que pase al matraz.'
+      :'Revisá el producto '+data.payload.formula+' y la conservación de sus '+data.payload.atomCount+' átomos.';
+  content.innerHTML='<div class="approval"><div class="seal">?</div><p class="eyebrow">TU DECISIÓN</p><h2>'+approvalLabel(data.kind)+'</h2><p>'+data.requester+' solicita aprobación. '+detail+'</p><div class="approval-actions"><button id="reject-online" class="secondary">Rechazar</button><button id="approve-online" class="primary">Aprobar</button></div></div>';
+  modal.showModal();
+  $('#approve-online').onclick=function(){network.connection.send({type:'approval-response',kind:data.kind,approved:true});modal.close();toast('Aprobación enviada.')};
+  $('#reject-online').onclick=function(){network.connection.send({type:'approval-response',kind:data.kind,approved:false});modal.close();toast('Rechazo enviado.')};
+}
+function handleApprovalResponse(data){
+  const pending=network.pendingApproval;
+  if(!pending||pending.kind!==data.kind)return;
+  network.pendingApproval=null;
+  if(!data.approved){modal.close();toast('La otra persona rechazó la solicitud. Podés corregirla y volver a enviarla.');return}
+  if(data.kind==='end-turn')finalizeEndTurn();
+  if(data.kind==='capture')finalizeCapture(pending.payload.key,pending.payload.flaskIndex);
+  if(data.kind==='reaction')finalizeReaction();
 }
 
 function createOnlineRoom(){
@@ -383,16 +417,20 @@ function endTurn(){
   const incomplete=Object.entries(state.structures).filter(([,s])=>structureIncomplete(s)).map(([key])=>key);
   if(incomplete.length)return toast('Completá o corregí las uniones pendientes en: '+incomplete.join(', ')+'.');
   let discarded=0;
-  while(myAtoms().length>6){ myAtoms().pop(); discarded++; if(myBonds().length) myBonds().pop(); }
-  while(myBonds().length>myAtoms().length) myBonds().pop();
-  content.innerHTML=`<div class="approval"><div class="seal">✓</div><p class="eyebrow">CONTROL DE FIN DE TURNO</p><h2>Cambios enviados</h2><p>${discarded?`Se descartaron ${discarded} átomos excedentes y sus enlaces. `:''}En una partida online, los demás jugadores revisarían aquí las uniones antes de aprobar.</p><button id="approve-demo" class="primary">Simular aprobación unánime <span>→</span></button></div>`;
-  modal.showModal();
-  $('#approve-demo').addEventListener('click',()=>{
-    modal.close(); Object.values(state.structures).forEach(s=>{s.atoms.forEach(a=>a.pending=false);s.bonds.forEach(b=>b.pending=false);s.pending=0}); state.movingToken=null; state.active=(state.active+1)%state.players.length;
-    if(state.active===localPlayerIndex()) state.round=Math.min(20,state.round+1);
-    state.phase='choice'; refillEmptyStructures(); render(); save(); toast('Turno aprobado.');
-    if(network.role==='offline'&&state.active!==localPlayerIndex()) setTimeout(simulateOpponents,900);
-  });
+  while(myAtoms().length>6){myAtoms().pop();discarded++;if(myBonds().length)myBonds().pop()}
+  while(myBonds().length>myAtoms().length)myBonds().pop();
+  requestOtherApproval('end-turn',{discarded});
+}
+
+function finalizeEndTurn(){
+  modal.close();
+  Object.values(state.structures).forEach(s=>{s.atoms.forEach(a=>a.pending=false);s.bonds.forEach(b=>b.pending=false);s.pending=0});
+  state.movingToken=null;
+  state.active=(state.active+1)%state.players.length;
+  if(state.active===0)state.round=Math.min(20,state.round+1);
+  state.phase='choice';
+  refillEmptyStructures();
+  render();save();toast('Turno aprobado.');
 }
 
 function simulateOpponents(){
@@ -444,12 +482,14 @@ function requestCapture(key){
 
 function approveCapture(key,flaskIndex){
   const structure=state.structures[key];
-  content.innerHTML='<div class="approval"><div class="seal">⌛</div><p class="eyebrow">APROBACIÓN DE CAPTURA</p><h2>'+moleculeFormula(structure)+'</h2><p>La molécula pasará al matraz '+(flaskIndex+1)+' cuando todos aprueben sus uniones.</p><button id="approve-capture" class="primary">Simular aprobación unánime <span>→</span></button></div>';
-  $('#approve-capture').onclick=()=>{
-    me().flasks[flaskIndex]=cloneMolecule(structure);
-    state.structures[key]={atoms:[],bonds:[],pending:0,captured:true};
-    state.movingToken=null;modal.close();render();save();toast('Molécula capturada en el matraz '+(flaskIndex+1)+'.');
-  };
+  requestOtherApproval('capture',{key,flaskIndex,formula:moleculeFormula(structure),structure:cloneMolecule(structure)});
+}
+
+function finalizeCapture(key,flaskIndex){
+  const structure=state.structures[key];
+  me().flasks[flaskIndex]=cloneMolecule(structure);
+  state.structures[key]={atoms:[],bonds:[],pending:0,captured:true};
+  state.movingToken=null;modal.close();render();save();toast('Molécula capturada en el matraz '+(flaskIndex+1)+'.');
 }
 
 function openReactionSelector(preselected=[]){
@@ -515,13 +555,15 @@ function reactionDrop(row,col,event){
 function confirmReaction(){
   const structure=state.reaction.structure;
   if(!structureReady(structure))return toast('Todos los átomos y enlaces deben formar un producto conectado.');
-  content.innerHTML='<div class="approval"><div class="seal">⌛</div><p class="eyebrow">APROBACIÓN DE REACCIÓN</p><h2>'+moleculeFormula(structure)+'</h2><p>Se conservaron '+structure.atoms.length+' átomos. Los demás jugadores deben aprobar el producto.</p><button id="approve-reaction" class="primary">Simular aprobación unánime <span>→</span></button></div>';
-  $('#approve-reaction').onclick=()=>{
-    const [target,...consumed]=state.reaction.sourceIndices;
-    me().flasks[target]=cloneMolecule(structure);
-    consumed.forEach(i=>me().flasks[i]=null);
-    state.reaction=null;modal.close();render();save();toast('Reacción aprobada y producto guardado.');
-  };
+  requestOtherApproval('reaction',{formula:moleculeFormula(structure),atomCount:structure.atoms.length,structure:cloneMolecule(structure)});
+}
+
+function finalizeReaction(){
+  const structure=state.reaction.structure;
+  const [target,...consumed]=state.reaction.sourceIndices;
+  me().flasks[target]=cloneMolecule(structure);
+  consumed.forEach(i=>me().flasks[i]=null);
+  state.reaction=null;modal.close();render();save();toast('Reacción aprobada y producto guardado.');
 }
 
 function showResearch(){
