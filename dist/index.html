@@ -24,11 +24,11 @@
       <div id="join-fields" class="join-fields" hidden>
         <label for="room-input">Código de sala</label>
         <div class="inline-form">
-          <input id="room-input" maxlength="6" placeholder="LAB-24">
+          <input id="room-input" maxlength="8" placeholder="LAB-1234">
           <button id="join-room" class="small-primary">Entrar</button>
         </div>
       </div>
-      <p class="fine-print">Sala privada · 2–4 jugadores · guardado automático</p>
+      <p id="connection-note" class="connection-note">Sala directa entre navegadores · 2 jugadores</p>
     </section>
     <aside class="lobby-art" aria-label="Ilustración de una mesa de laboratorio">
       <div class="formula f1">H—C≡N</div>
@@ -52,7 +52,7 @@
     </header>
 
     <aside class="players-panel">
-      <div class="panel-heading"><span>JUGADORES</span><small>● 4 conectados</small></div>
+      <div class="panel-heading"><span>JUGADORES</span><small id="connection-status">○ esperando conexión</small></div>
       <div id="player-list"></div>
       <button id="open-research" class="research-button"><span>⌬</span><div><small>MI ARCHIVO</small><b>Investigaciones</b></div><em id="research-count">2</em></button>
       <button id="open-flasks" class="research-button flask-button"><span>⚗</span><div><small>MI LABORATORIO</small><b>Mis matraces</b></div><em id="flask-count">3</em></button>
@@ -117,6 +117,7 @@
 
   <dialog id="modal" class="modal"><div id="modal-content"></div><button id="close-modal" class="modal-close" aria-label="Cerrar">×</button></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
