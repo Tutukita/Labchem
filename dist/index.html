@@ -1,1 +1,122 @@
-fs is not defined
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef4e8">
+  <title>Laboratorio de Moléculas</title>
+  <meta name="description" content="Prototipo digital del juego Laboratorio de Moléculas">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="lobby" class="lobby-shell">
+    <section class="lobby-card" aria-labelledby="game-title">
+      <div class="brand-mark" aria-hidden="true"><span>C</span><i></i><span>O</span></div>
+      <p class="eyebrow">PROTOTIPO DIGITAL · US v3.8</p>
+      <h1 id="game-title">Laboratorio<br>de Moléculas</h1>
+      <p class="intro">Construí, reaccioná e investigá. Cada unión cuenta.</p>
+      <label for="player-name">Tu nombre</label>
+      <input id="player-name" maxlength="18" value="Andrea" autocomplete="name">
+      <div class="lobby-actions">
+        <button id="create-room" class="primary">Crear sala privada <span>→</span></button>
+        <button id="show-join" class="secondary">Ingresar con código</button>
+      </div>
+      <div id="join-fields" class="join-fields" hidden>
+        <label for="room-input">Código de sala</label>
+        <div class="inline-form">
+          <input id="room-input" maxlength="6" placeholder="LAB-24">
+          <button id="join-room" class="small-primary">Entrar</button>
+        </div>
+      </div>
+      <p class="fine-print">Sala privada · 2–4 jugadores · guardado automático</p>
+    </section>
+    <aside class="lobby-art" aria-label="Ilustración de una mesa de laboratorio">
+      <div class="formula f1">H—C≡N</div>
+      <div class="formula f2">O=C=O</div>
+      <div class="flask flask-one"><div class="liquid"></div></div>
+      <div class="flask flask-two"><div class="liquid"></div></div>
+      <div class="bubble b1"></div><div class="bubble b2"></div><div class="bubble b3"></div>
+      <p>Una mesa compartida.<br>Muchas formas de ganar.</p>
+    </aside>
+  </div>
+
+  <div id="game" class="game-shell" hidden>
+    <header class="topbar">
+      <div class="mini-brand"><span class="logo-atom">C</span><div><b>Laboratorio</b><small>de Moléculas</small></div></div>
+      <div class="turn-status">
+        <span class="status-dot"></span>
+        <div><small>TURNO ACTUAL</small><strong id="turn-label">Tu turno · Ronda 1/20</strong></div>
+      </div>
+      <div class="room-pill"><small>SALA PRIVADA</small><b id="room-code">LAB-24</b><button id="copy-code" title="Copiar código">⧉</button></div>
+      <button id="menu-button" class="icon-button" aria-label="Abrir menú">•••</button>
+    </header>
+
+    <aside class="players-panel">
+      <div class="panel-heading"><span>JUGADORES</span><small>● 4 conectados</small></div>
+      <div id="player-list"></div>
+      <button id="open-research" class="research-button"><span>⌬</span><div><small>MI ARCHIVO</small><b>Investigaciones</b></div><em id="research-count">2</em></button>
+      <button id="open-flasks" class="research-button flask-button"><span>⚗</span><div><small>MI LABORATORIO</small><b>Mis matraces</b></div><em id="flask-count">3</em></button>
+      <div class="phase-card">
+        <small>FASE ACTUAL</small>
+        <b id="phase-title">Robo o investigación</b>
+        <p id="phase-help">Elegí una opción para comenzar tu turno.</p>
+        <div class="phase-progress"><i class="active"></i><i></i><i></i><i></i></div>
+      </div>
+    </aside>
+
+    <main class="table-area">
+      <div class="table-toolbar">
+        <div>
+          <p class="eyebrow">MESA COMPARTIDA</p>
+          <h2>Banco molecular</h2>
+        </div>
+        <div class="turn-actions">
+          <button id="open-flasks-main" class="action-button flask-action">⚗ Mis matraces</button>
+          <button id="open-reaction" class="action-button">⇄ Reacción</button>
+          <button id="remove-token" class="action-button edit-action" disabled>↩ Devolver a la mano</button>
+          <button id="draw-atoms" class="action-button primary-action">Robar 3 átomos</button>
+          <button id="take-research" class="action-button">Tomar investigación</button>
+          <button id="end-turn" class="action-button end-action" disabled>Finalizar turno</button>
+        </div>
+      </div>
+
+      <section class="molecular-board" aria-label="Tablero molecular de cuatro sectores">
+        <div class="sector" data-sector="A"><span class="sector-label">A</span><div class="molecule molecule-a"><span class="atom oxygen">O</span></div><small>Disponible</small></div>
+        <div class="sector" data-sector="B"><span class="sector-label">B</span><div class="molecule molecule-b"><span class="atom hydrogen">H</span></div><small>Disponible</small></div>
+        <div class="sector" data-sector="C"><span class="sector-label">C</span><div class="molecule molecule-c"><span class="atom carbon">C</span><span class="bond double">═</span><span class="atom oxygen">O</span></div><small>2 átomos · en progreso</small></div>
+        <div class="sector" data-sector="D"><span class="sector-label">D</span><div class="molecule molecule-d"><span class="atom nitrogen">N</span></div><small>Disponible</small></div>
+      </section>
+
+      <section class="private-hand">
+        <div class="hand-title"><div><p class="eyebrow">TU MANO</p><h3>Componentes disponibles</h3></div><span id="hand-limit">3 / 6 átomos</span></div>
+        <div class="hand-groups">
+          <div><small>ÁTOMOS</small><div id="atom-hand" class="card-row"></div></div>
+          <div><small>ENLACES</small><div id="bond-hand" class="card-row"></div></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="market-panel">
+      <div class="round-card"><span>RONDA</span><b id="round-number">01</b><small>de 20</small></div>
+      <div class="demand-heading"><div><p class="eyebrow">MERCADO</p><h2>Demandas de la ronda</h2></div><span>2 activas</span></div>
+      <article class="demand-card amber">
+        <div class="demand-top"><span>COMERCIAL</span><b>6 <small>¢</small></b></div>
+        <h3>Alquinos</h3><div class="mini-formula">C ≡ C</div>
+        <p>Una molécula con al menos un enlace triple entre carbonos.</p>
+        <button class="sell-button" data-demand="Alquinos">Cumplir demanda</button>
+      </article>
+      <article class="demand-card blue">
+        <div class="demand-top"><span>COMERCIAL</span><b>10 <small>¢</small></b></div>
+        <h3>Amidas</h3><div class="mini-formula">C(=O)—N</div>
+        <p>Una molécula con un grupo carbonilo unido a nitrógeno.</p>
+        <button class="sell-button" data-demand="Amidas">Cumplir demanda</button>
+      </article>
+      <div class="market-note"><span>↻</span><p>Las demandas se renuevan al comenzar cada ronda.</p></div>
+    </aside>
+  </div>
+
+  <dialog id="modal" class="modal"><div id="modal-content"></div><button id="close-modal" class="modal-close" aria-label="Cerrar">×</button></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
