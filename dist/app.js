@@ -27,38 +27,87 @@ const state = {
     {name:'Acetonitrilo', formula:'CH₃—C≡N', pv:6}
   ]
 };
+const network = {role:'offline',playerIndex:0,peer:null,connection:null,connected:false,applyingRemote:false};
 
-function save(){ localStorage.setItem('labchem-mvp-state', JSON.stringify(state)); }
+function starterResearch(){return [{name:'Ácido metanoico',formula:'H—C(=O)—OH',pv:6},{name:'Acetonitrilo',formula:'CH₃—C≡N',pv:6}]}
+function createPlayer(name,color,connected=true){return {name,color,connected,credits:0,pv:0,pollution:0,flasks:[null,null,null],atoms:['C','O','H'],bonds:['—','—','═'],research:starterResearch()}}
+function localPlayerIndex(){return network.playerIndex}
+function me(){return state.players[localPlayerIndex()]||state.players[0]}
+function myAtoms(){return me().atoms||(me().atoms=[])}
+function myBonds(){return me().bonds||(me().bonds=[])}
+function myResearch(){return me().research||(me().research=[])}
+function gameReady(){return network.connected&&state.players.filter(p=>p.connected!==false).length===2}
+function snapshot(){return JSON.parse(JSON.stringify(state))}
+function persist(){localStorage.setItem('labchem-mvp-state',JSON.stringify(state))}
+function sendState(){if(network.role==='host'&&network.connection&&network.connection.open)network.connection.send({type:'state',state:snapshot()})}
+function applyRemoteState(next){network.applyingRemote=true;Object.keys(state).forEach(k=>delete state[k]);Object.assign(state,JSON.parse(JSON.stringify(next)));persist();lobby.hidden=true;game.hidden=false;render();network.applyingRemote=false}
+function peerIdForRoom(code){return 'labchem-'+String(code).toLowerCase().replace(/[^a-z0-9-]/g,'')}
+function setLobbyMessage(message,isError=false){const note=$('#connection-note');if(note){note.textContent=message;note.classList.toggle('error',isError)}}
+function destroyNetwork(){try{if(network.connection)network.connection.close()}catch(error){}try{if(network.peer)network.peer.destroy()}catch(error){}network.connection=null;network.peer=null;network.connected=false}
+
+function attachConnection(connection){
+  network.connection=connection;
+  connection.on('open',function(){if(network.role==='guest'){setLobbyMessage('Conectado. Sincronizando la mesa…');connection.send({type:'join',name:$('#player-name').value.trim()||'Jugador 2'})}});
+  connection.on('data',function(data){
+    if(!data||typeof data!=='object')return;
+    if(network.role==='host'&&data.type==='join'){state.players[1]=createPlayer(String(data.name||'Jugador 2').slice(0,18),'#688aa2',true);network.connected=true;render();persist();sendState();toast(state.players[1].name+' se unió a la sala.');return}
+    if(network.role==='guest'&&data.type==='state'){network.connected=true;applyRemoteState(data.state);toast('Sala sincronizada. Ya pueden jugar.');return}
+    if(network.role==='host'&&data.type==='proposal'&&state.active===1){applyRemoteState(data.state);sendState()}
+  });
+  connection.on('close',function(){network.connected=false;if(state.players[1])state.players[1].connected=false;render();toast('La otra persona se desconectó.')});
+  connection.on('error',function(){toast('Hubo un problema en la conexión.')});
+}
+
+function createOnlineRoom(){
+  destroyNetwork();network.role='host';network.playerIndex=0;state.room=roomCode();
+  state.players=[createPlayer($('#player-name').value.trim()||'Jugador 1','#315c45'),createPlayer('Esperando jugador…','#688aa2',false)];
+  state.active=0;state.phase='choice';state.selectedAtom=null;state.selectedBond=null;state.movingToken=null;
+  setLobbyMessage('Creando sala…');
+  const peer=new Peer(peerIdForRoom(state.room),{debug:1});network.peer=peer;
+  peer.on('open',function(){lobby.hidden=true;game.hidden=false;render();persist();toast('Sala creada. Compartí el código '+state.room+'.')});
+  peer.on('connection',function(connection){if(network.connection&&network.connection.open){connection.close();return}attachConnection(connection)});
+  peer.on('error',function(error){setLobbyMessage(error&&error.type==='unavailable-id'?'Ese código ya está ocupado. Probá crear otra sala.':'No se pudo abrir la sala.',true);toast('No se pudo iniciar la conexión online.')});
+}
+
+function joinOnlineRoom(){
+  const code=($('#room-input').value||'').trim().toUpperCase();
+  if(!/^LAB-\d{4}$/.test(code))return setLobbyMessage('Ingresá un código con el formato LAB-1234.',true);
+  destroyNetwork();network.role='guest';network.playerIndex=1;state.room=code;setLobbyMessage('Buscando la sala '+code+'…');
+  const peer=new Peer(undefined,{debug:1});network.peer=peer;
+  peer.on('open',function(){attachConnection(peer.connect(peerIdForRoom(code),{reliable:true,serialization:'json'}))});
+  peer.on('error',function(){setLobbyMessage('No encontramos esa sala o la conexión fue interrumpida.',true)});
+}
+
+
+function save(){persist();if(network.applyingRemote||!network.connected||!network.connection||!network.connection.open)return;if(network.role==='host')sendState();else network.connection.send({type:'proposal',state:snapshot(),playerIndex:network.playerIndex});}
 function randomOf(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-function roomCode(){ return `LAB-${Math.floor(10+Math.random()*90)}`; }
+function roomCode(){return 'LAB-'+Math.floor(1000+Math.random()*9000);}
 function toast(message){ const t=$('#toast'); t.textContent=message; t.classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>t.classList.remove('show'),2300); }
 
-function enterRoom(code){
-  state.room=(code||roomCode()).toUpperCase();
-  state.players[0].name=$('#player-name').value.trim()||'Jugador 1';
-  lobby.hidden=true; game.hidden=false; render(); save();
-}
+function enterRoom(code){if(code)joinOnlineRoom();else createOnlineRoom();}
 
 function render(){
   $('#room-code').textContent=state.room;
   $('#round-number').textContent=String(state.round).padStart(2,'0');
-  $('#turn-label').textContent=state.active===0?`Tu turno · Ronda ${state.round}/20`:`Turno de ${state.players[state.active].name} · Ronda ${state.round}/20`;
+  $('#turn-label').textContent=state.active===localPlayerIndex()?`Tu turno · Ronda ${state.round}/20`:`Turno de ${state.players[state.active].name} · Ronda ${state.round}/20`;
   $('#player-list').innerHTML=state.players.map((p,i)=>`
     <button class="player-item ${i===state.active?'active':''}" data-player="${i}">
       <span class="avatar" style="background:${p.color}">${p.name.slice(0,2).toUpperCase()}</span>
-      <span class="player-meta"><b>${p.name}${i===0?' (vos)':''}</b><small>${p.credits} ¢ · polución ${p.pollution}</small></span>
+      <span class="player-meta"><b>${p.name}${i===localPlayerIndex()?' (vos)':''}</b><small>${p.credits} ¢ · polución ${p.pollution}</small></span>
       <span class="score"><b>${p.pv} PV</b><small>${p.flasks.filter(x=>x!=='vacío').length}/3 matraces</small></span>
     </button>`).join('');
-  $('#atom-hand').innerHTML=state.atoms.map((a,i)=>`<button class="component-card ${i===state.selectedAtom?'selected':''}" draggable="true" title="Arrastrar átomo ${a}" data-atom="${i}">${a}</button>`).join('');
-  $('#bond-hand').innerHTML=state.bonds.map((b,i)=>`<button class="component-card bond-card ${i===state.selectedBond?'selected':''}" draggable="true" title="Arrastrar enlace" data-bond="${i}">${b}</button>`).join('');
-  $('#hand-limit').textContent=`${state.atoms.length} / 6 átomos`;
-  $('#research-count').textContent=state.research.length;
-  $('#flask-count').textContent=state.players[0].flasks.length;
+  $('#atom-hand').innerHTML=myAtoms().map((a,i)=>`<button class="component-card ${i===state.selectedAtom?'selected':''}" draggable="true" title="Arrastrar átomo ${a}" data-atom="${i}">${a}</button>`).join('');
+  $('#bond-hand').innerHTML=myBonds().map((b,i)=>`<button class="component-card bond-card ${i===state.selectedBond?'selected':''}" draggable="true" title="Arrastrar enlace" data-bond="${i}">${b}</button>`).join('');
+  $('#hand-limit').textContent=`${myAtoms().length} / 6 átomos`;
+  $('#research-count').textContent=myResearch().length;
+  $('#flask-count').textContent=me().flasks.length;
   renderBoard();
   const choice=state.phase==='choice';
-  $('#draw-atoms').disabled=!choice||state.active!==0;
-  $('#take-research').disabled=!choice||state.active!==0;
-  $('#end-turn').disabled=choice||state.active!==0;
+  const canAct=gameReady();
+  const status=$('#connection-status');if(status)status.textContent=network.connected?'● 2 conectados':'○ esperando conexión';
+  $('#draw-atoms').disabled=!canAct||!choice||state.active!==localPlayerIndex();
+  $('#take-research').disabled=!canAct||!choice||state.active!==localPlayerIndex();
+  $('#end-turn').disabled=!canAct||choice||state.active!==localPlayerIndex();
   $('#remove-token').disabled=!state.movingToken;
   $('#phase-title').textContent=choice?'Robo o investigación':'Acciones del turno';
   $('#phase-help').textContent=choice?'Elegí una opción para comenzar tu turno.':'Construí, reaccioná, vendé o investigá.';
@@ -202,7 +251,7 @@ function selectBond(index){
 }
 
 function dragFromHand(kind,index,event){
-  if(state.phase!=='actions'||state.active!==0){event.preventDefault();return}
+  if(state.phase!=='actions'||state.active!==localPlayerIndex()){event.preventDefault();return}
   event.dataTransfer.effectAllowed='move';
   event.dataTransfer.setData('text/plain',JSON.stringify({source:'hand',kind,index}));
 }
@@ -226,13 +275,13 @@ function placeFromHand(kind,index,key,row,col){
   if(kind==='atom'){
     const allowance=canPlacePendingAtom(key);
     if(!allowance.ok)return toast(allowance.message);
-    const element=state.atoms[index]; if(element===undefined)return;
+    const element=myAtoms()[index]; if(element===undefined)return;
     structure.atoms.push({id:state.nextTokenId++,element,row,col,pending:true});
-    state.atoms.splice(index,1);
+    myAtoms().splice(index,1);
   }else{
-    const type=state.bonds[index]; if(type===undefined)return;
+    const type=myBonds()[index]; if(type===undefined)return;
     structure.bonds.push({id:state.nextTokenId++,type,row,col,angle:0,pending:true,atomId:null});
-    state.bonds.splice(index,1);
+    myBonds().splice(index,1);
   }
   recountPending(structure);autoOrientBonds(structure);
   state.selectedAtom=null;state.selectedBond=null;state.movingToken=null;
@@ -269,7 +318,7 @@ function rotateBond(key,id){
 }
 
 function handleGridCell(key,row,col){
-  if(state.phase!=='actions'||state.active!==0) return;
+  if(state.phase!=='actions'||state.active!==localPlayerIndex()) return;
   const structure=state.structures[key];
   const atom=atomAt(structure,row,col), bond=bondAt(structure,row,col);
   if(bond){
@@ -297,7 +346,7 @@ function removeSelectedToken(){
   const index=list.findIndex(item=>item.id===selected.id);
   if(index<0||!list[index].pending)return toast('Solo podés quitar fichas colocadas durante este turno.');
   const [token]=list.splice(index,1);
-  if(selected.kind==='atom')state.atoms.push(token.element);else state.bonds.push(token.type);
+  if(selected.kind==='atom')myAtoms().push(token.element);else myBonds().push(token.type);
   recountPending(structure);autoOrientBonds(structure);state.movingToken=null;render();save();toast('Ficha devuelta a tu mano.');
 }
 
@@ -311,10 +360,10 @@ function refillEmptyStructures(){
 }
 
 function drawAtoms(){
-  for(let i=0;i<3;i++) state.atoms.push(randomOf(atomPool));
-  while(state.bonds.length<state.atoms.length) state.bonds.push(randomOf(bondPool));
+  for(let i=0;i<3;i++) myAtoms().push(randomOf(atomPool));
+  while(myBonds().length<myAtoms().length) myBonds().push(randomOf(bondPool));
   state.phase='actions'; render(); save();
-  toast(`Robaste 3 átomos. Enlaces repuestos hasta ${state.bonds.length}.`);
+  toast(`Robaste 3 átomos. Enlaces repuestos hasta ${myBonds().length}.`);
 }
 
 function takeResearch(){
@@ -326,7 +375,7 @@ function takeResearch(){
   content.innerHTML=`<div class="modal-body"><p class="eyebrow">ELEGÍ 1 DE 3</p><h2>Nueva investigación</h2><p>Las otras dos volverán al descarte.</p><div class="research-list">${options.map((r,i)=>`<button class="research-card choose-research" data-choice="${i}"><span><b>${r.name}</b><small>${r.formula}</small></span><em>${r.pv} PV</em></button>`).join('')}</div></div>`;
   modal.showModal();
   document.querySelectorAll('.choose-research').forEach(btn=>btn.addEventListener('click',()=>{
-    state.research.push(options[+btn.dataset.choice]); state.phase='actions'; modal.close(); render(); save(); toast('Investigación incorporada. No robás átomos este turno.');
+    myResearch().push(options[+btn.dataset.choice]); state.phase='actions'; modal.close(); render(); save(); toast('Investigación incorporada. No robás átomos este turno.');
   }));
 }
 
@@ -334,24 +383,24 @@ function endTurn(){
   const incomplete=Object.entries(state.structures).filter(([,s])=>structureIncomplete(s)).map(([key])=>key);
   if(incomplete.length)return toast('Completá o corregí las uniones pendientes en: '+incomplete.join(', ')+'.');
   let discarded=0;
-  while(state.atoms.length>6){ state.atoms.pop(); discarded++; if(state.bonds.length) state.bonds.pop(); }
-  while(state.bonds.length>state.atoms.length) state.bonds.pop();
+  while(myAtoms().length>6){ myAtoms().pop(); discarded++; if(myBonds().length) myBonds().pop(); }
+  while(myBonds().length>myAtoms().length) myBonds().pop();
   content.innerHTML=`<div class="approval"><div class="seal">✓</div><p class="eyebrow">CONTROL DE FIN DE TURNO</p><h2>Cambios enviados</h2><p>${discarded?`Se descartaron ${discarded} átomos excedentes y sus enlaces. `:''}En una partida online, los demás jugadores revisarían aquí las uniones antes de aprobar.</p><button id="approve-demo" class="primary">Simular aprobación unánime <span>→</span></button></div>`;
   modal.showModal();
   $('#approve-demo').addEventListener('click',()=>{
     modal.close(); Object.values(state.structures).forEach(s=>{s.atoms.forEach(a=>a.pending=false);s.bonds.forEach(b=>b.pending=false);s.pending=0}); state.movingToken=null; state.active=(state.active+1)%state.players.length;
-    if(state.active===0) state.round=Math.min(20,state.round+1);
+    if(state.active===localPlayerIndex()) state.round=Math.min(20,state.round+1);
     state.phase='choice'; refillEmptyStructures(); render(); save(); toast('Turno aprobado.');
-    if(state.active!==0) setTimeout(simulateOpponents,900);
+    if(network.role==='offline'&&state.active!==localPlayerIndex()) setTimeout(simulateOpponents,900);
   });
 }
 
 function simulateOpponents(){
   const name=state.players[state.active].name; toast(`${name} completó su turno.`);
   state.active=(state.active+1)%state.players.length;
-  if(state.active===0) state.round=Math.min(20,state.round+1);
+  if(state.active===localPlayerIndex()) state.round=Math.min(20,state.round+1);
   render(); save();
-  if(state.active!==0) setTimeout(simulateOpponents,900); else toast(`Comienza la ronda ${state.round}. Es tu turno.`);
+  if(network.role==='offline'&&state.active!==localPlayerIndex()) setTimeout(simulateOpponents,900); else toast(`Comienza la ronda ${state.round}. Es tu turno.`);
 }
 
 function moleculeFormula(molecule){
@@ -371,7 +420,7 @@ function cloneMolecule(structure){
 }
 
 function showFlasks(index){
-  const p=state.players[index], own=index===0;
+  const p=state.players[index], own=index===localPlayerIndex();
   content.innerHTML='<div class="modal-body"><p class="eyebrow">'+(own?'MI LABORATORIO':'INFORMACIÓN PÚBLICA')+'</p><h2>Matraces de '+p.name+'</h2><p>'+(own?'Desde tus matraces podés seleccionar reactivos y comenzar una reacción.':'Información pública de solo lectura.')+'</p><div class="flask-grid">'+p.flasks.map((f,i)=>{
     const empty=!f||f==='vacío';
     const label=empty?'Vacío':typeof f==='string'?f:moleculeFormula(f);
@@ -387,8 +436,8 @@ function showFlasks(index){
 function requestCapture(key){
   const structure=state.structures[key];
   if(!structureReady(structure))return toast('La estructura todavía no está conectada para solicitar captura.');
-  const empty=state.players[0].flasks.map((f,i)=>(!f||f==='vacío')?i:null).filter(i=>i!==null);
-  content.innerHTML='<div class="modal-body"><p class="eyebrow">CAPTURA DE MOLÉCULA</p><h2>Elegí un matraz vacío</h2><p>Los demás jugadores aprobarán la estructura antes de confirmar la captura.</p><div class="flask-grid">'+state.players[0].flasks.map((f,i)=>'<button class="flask-card capture-choice" data-flask="'+i+'" '+(empty.includes(i)?'':'disabled')+'><small>MATRAZ '+(i+1)+'</small><b>'+(empty.includes(i)?'Disponible':'Ocupado')+'</b></button>').join('')+'</div></div>';
+  const empty=me().flasks.map((f,i)=>(!f||f==='vacío')?i:null).filter(i=>i!==null);
+  content.innerHTML='<div class="modal-body"><p class="eyebrow">CAPTURA DE MOLÉCULA</p><h2>Elegí un matraz vacío</h2><p>Los demás jugadores aprobarán la estructura antes de confirmar la captura.</p><div class="flask-grid">'+me().flasks.map((f,i)=>'<button class="flask-card capture-choice" data-flask="'+i+'" '+(empty.includes(i)?'':'disabled')+'><small>MATRAZ '+(i+1)+'</small><b>'+(empty.includes(i)?'Disponible':'Ocupado')+'</b></button>').join('')+'</div></div>';
   modal.showModal();
   document.querySelectorAll('.capture-choice:not([disabled])').forEach(button=>button.onclick=()=>approveCapture(key,+button.dataset.flask));
 }
@@ -397,18 +446,18 @@ function approveCapture(key,flaskIndex){
   const structure=state.structures[key];
   content.innerHTML='<div class="approval"><div class="seal">⌛</div><p class="eyebrow">APROBACIÓN DE CAPTURA</p><h2>'+moleculeFormula(structure)+'</h2><p>La molécula pasará al matraz '+(flaskIndex+1)+' cuando todos aprueben sus uniones.</p><button id="approve-capture" class="primary">Simular aprobación unánime <span>→</span></button></div>';
   $('#approve-capture').onclick=()=>{
-    state.players[0].flasks[flaskIndex]=cloneMolecule(structure);
+    me().flasks[flaskIndex]=cloneMolecule(structure);
     state.structures[key]={atoms:[],bonds:[],pending:0,captured:true};
     state.movingToken=null;modal.close();render();save();toast('Molécula capturada en el matraz '+(flaskIndex+1)+'.');
   };
 }
 
 function openReactionSelector(preselected=[]){
-  const occupied=state.players[0].flasks.map((f,i)=>(f&&f!=='vacío')?i:null).filter(i=>i!==null);
+  const occupied=me().flasks.map((f,i)=>(f&&f!=='vacío')?i:null).filter(i=>i!==null);
   if(!occupied.length){
     content.innerHTML='<div class="approval"><div class="seal">⚗</div><h2>No hay reactivos</h2><p>Capturá primero una molécula en uno de tus matraces.</p></div>';modal.showModal();return;
   }
-  content.innerHTML='<div class="modal-body"><p class="eyebrow">REACCIÓN GRATUITA</p><h2>Elegí 1 o 2 reactivos</h2><p>Podés usar una molécula o fusionar dos. Sus átomos se conservarán.</p><div class="reaction-options">'+occupied.map(i=>'<label class="reaction-option"><input type="checkbox" value="'+i+'" '+(preselected.includes(i)?'checked':'')+'><span><b>Matraz '+(i+1)+'</b><small>'+moleculeFormula(state.players[0].flasks[i])+'</small></span></label>').join('')+'</div><button id="start-reaction" class="primary modal-primary">Abrir editor de reacción <span>→</span></button></div>';
+  content.innerHTML='<div class="modal-body"><p class="eyebrow">REACCIÓN GRATUITA</p><h2>Elegí 1 o 2 reactivos</h2><p>Podés usar una molécula o fusionar dos. Sus átomos se conservarán.</p><div class="reaction-options">'+occupied.map(i=>'<label class="reaction-option"><input type="checkbox" value="'+i+'" '+(preselected.includes(i)?'checked':'')+'><span><b>Matraz '+(i+1)+'</b><small>'+moleculeFormula(me().flasks[i])+'</small></span></label>').join('')+'</div><button id="start-reaction" class="primary modal-primary">Abrir editor de reacción <span>→</span></button></div>';
   modal.showModal();
   $('#start-reaction').onclick=()=>{
     const selected=[...document.querySelectorAll('.reaction-option input:checked')].map(i=>+i.value);
@@ -420,7 +469,7 @@ function openReactionSelector(preselected=[]){
 function startReaction(indices){
   const atoms=[],bonds=[];let cursorCol=2,cursorRow=2;
   indices.forEach((flaskIndex,moleculeIndex)=>{
-    const molecule=state.players[0].flasks[flaskIndex];
+    const molecule=me().flasks[flaskIndex];
     const all=[...molecule.atoms,...molecule.bonds];
     const minRow=Math.min(...all.map(t=>t.row)),minCol=Math.min(...all.map(t=>t.col));
     const maxCol=Math.max(...all.map(t=>t.col));
@@ -469,14 +518,14 @@ function confirmReaction(){
   content.innerHTML='<div class="approval"><div class="seal">⌛</div><p class="eyebrow">APROBACIÓN DE REACCIÓN</p><h2>'+moleculeFormula(structure)+'</h2><p>Se conservaron '+structure.atoms.length+' átomos. Los demás jugadores deben aprobar el producto.</p><button id="approve-reaction" class="primary">Simular aprobación unánime <span>→</span></button></div>';
   $('#approve-reaction').onclick=()=>{
     const [target,...consumed]=state.reaction.sourceIndices;
-    state.players[0].flasks[target]=cloneMolecule(structure);
-    consumed.forEach(i=>state.players[0].flasks[i]=null);
+    me().flasks[target]=cloneMolecule(structure);
+    consumed.forEach(i=>me().flasks[i]=null);
     state.reaction=null;modal.close();render();save();toast('Reacción aprobada y producto guardado.');
   };
 }
 
 function showResearch(){
-  content.innerHTML=`<div class="modal-body"><p class="eyebrow">INFORMACIÓN PRIVADA</p><h2>Mis investigaciones</h2><p>Solo vos podés ver estas cartas hasta que solicites completarlas.</p><div class="research-list">${state.research.map(r=>`<div class="research-card"><span><b>${r.name}</b><small>${r.formula}</small></span><em>${r.pv} PV</em></div>`).join('')}</div></div>`;
+  content.innerHTML=`<div class="modal-body"><p class="eyebrow">INFORMACIÓN PRIVADA</p><h2>Mis investigaciones</h2><p>Solo vos podés ver estas cartas hasta que solicites completarlas.</p><div class="research-list">${myResearch().map(r=>`<div class="research-card"><span><b>${r.name}</b><small>${r.formula}</small></span><em>${r.pv} PV</em></div>`).join('')}</div></div>`;
   modal.showModal();
 }
 
@@ -485,15 +534,15 @@ function requestSale(name){
   modal.showModal(); $('#understood').addEventListener('click',()=>modal.close());
 }
 
-$('#create-room').addEventListener('click',()=>enterRoom());
+$('#create-room').addEventListener('click',createOnlineRoom);
 $('#show-join').addEventListener('click',()=>{$('#join-fields').hidden=false;$('#room-input').focus();});
-$('#join-room').addEventListener('click',()=>enterRoom($('#room-input').value||'LAB-24'));
+$('#join-room').addEventListener('click',joinOnlineRoom);
 $('#draw-atoms').addEventListener('click',drawAtoms);
 $('#take-research').addEventListener('click',takeResearch);
 $('#end-turn').addEventListener('click',endTurn);
 $('#open-research').addEventListener('click',showResearch);
-$('#open-flasks').addEventListener('click',()=>showFlasks(0));
-$('#open-flasks-main').addEventListener('click',()=>showFlasks(0));
+$('#open-flasks').addEventListener('click',()=>showFlasks(localPlayerIndex()));
+$('#open-flasks-main').addEventListener('click',()=>showFlasks(localPlayerIndex()));
 $('#open-reaction').addEventListener('click',()=>openReactionSelector());
 $('#remove-token').addEventListener('click',removeSelectedToken);
 $('#close-modal').addEventListener('click',()=>modal.close());
