@@ -115,3 +115,5 @@
 .card-row.return-target:after{content:'SOLTAR PARA DEVOLVER';align-self:center;color:#526f28;font:700 7px 'DM Mono'}
 
 .connection-note{margin-top:18px;color:#617167;font-size:12px;min-height:18px}.connection-note.error{color:#a13f35}.panel-heading #connection-status{font-size:8px;color:#5d7e48}
+
+.approval-actions{display:flex;justify-content:center;gap:10px;margin-top:18px}.approval-actions .primary,.approval-actions .secondary{min-width:120px}
