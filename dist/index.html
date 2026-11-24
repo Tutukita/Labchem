@@ -114,7 +114,11 @@
     </aside>
   </div>
 
-  <dialog id="modal" class="modal"><div id="modal-content"></div><button id="close-modal" class="modal-close" aria-label="Cerrar">×</button></dialog>
+  <dialog id="modal" class="modal">
+    <button id="modal-drag-handle" class="modal-drag-handle" type="button" aria-label="Arrastrar ventana">⋮⋮ <span>ARRASTRAR VENTANA</span></button>
+    <div id="modal-content"></div>
+    <button id="close-modal" class="modal-close" aria-label="Cerrar">×</button>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="config.js"></script>
   <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>

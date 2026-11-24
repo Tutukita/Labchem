@@ -5,6 +5,47 @@ const modal = $('#modal');
 const content = $('#modal-content');
 const atomPool = ['H','H','H','H','C','C','O','O','N'];
 const bondPool = ['—','—','—','—','═','═','≡'];
+function buildResearchTarget(heavyAtoms,heavyBonds){
+  const elements=[...heavyAtoms],edges=heavyBonds.map(edge=>[...edge]);
+  heavyAtoms.forEach((element,index)=>{
+    const used=heavyBonds.reduce((sum,[a,b,order])=>sum+(a===index||b===index?order:0),0);
+    const hydrogens=Math.max(0,({C:4,N:3,O:2}[element]||0)-used);
+    for(let count=0;count<hydrogens;count++){const hydrogenIndex=elements.length;elements.push('H');edges.push([index,hydrogenIndex,1])}
+  });
+  return {elements,edges};
+}
+
+function makeResearchType(name,formula,pv,copies,heavyAtoms,heavyBonds){
+  const target=buildResearchTarget(heavyAtoms,heavyBonds);
+  return Array.from({length:copies},(_,copy)=>({name,formula,pv,copy:copy+1,target:JSON.parse(JSON.stringify(target))}));
+}
+
+const RESEARCH_DECK = [
+  ...makeResearchType('Nitrógeno','N≡N',5,2,['N','N'],[[0,1,3]]),
+  ...makeResearchType('Dióxido de carbono','O=C=O',5,1,['O','C','O'],[[0,1,2],[1,2,2]]),
+  ...makeResearchType('Etino','H—C≡C—H',5,1,['C','C'],[[0,1,3]]),
+  ...makeResearchType('Metanal','H₂C=O',5,1,['C','O'],[[0,1,2]]),
+  ...makeResearchType('Ácido metanoico','H—C(=O)—OH',6,1,['C','O','O'],[[0,1,2],[0,2,1]]),
+  ...makeResearchType('Etanal','CH₃—CH=O',6,1,['C','C','O'],[[0,1,1],[1,2,2]]),
+  ...makeResearchType('Ácido etanoico','CH₃—C(=O)—OH',7,1,['C','C','O','O'],[[0,1,1],[1,2,2],[1,3,1]]),
+  ...makeResearchType('Metanoato de metilo','H—C(=O)—O—CH₃',6,2,['C','O','O','C'],[[0,1,2],[0,2,1],[2,3,1]]),
+  ...makeResearchType('Propino','CH₃—C≡CH',6,2,['C','C','C'],[[0,1,1],[1,2,3]]),
+  ...makeResearchType('Propanona','CH₃—C(=O)—CH₃',7,2,['C','C','O','C'],[[0,1,1],[1,2,2],[1,3,1]]),
+  ...makeResearchType('Propanal','CH₃—CH₂—CH=O',7,2,['C','C','C','O'],[[0,1,1],[1,2,1],[2,3,2]]),
+  ...makeResearchType('Ácido propanoico','CH₃—CH₂—C(=O)—OH',8,1,['C','C','C','O','O'],[[0,1,1],[1,2,1],[2,3,2],[2,4,1]]),
+  ...makeResearchType('Cianuro de hidrógeno','H—C≡N',5,1,['C','N'],[[0,1,3]]),
+  ...makeResearchType('Urea','O=C(NH₂)₂',7,2,['O','C','N','N'],[[0,1,2],[1,2,1],[1,3,1]]),
+  ...makeResearchType('Metanimina','H₂C=NH',5,2,['C','N'],[[0,1,2]]),
+  ...makeResearchType('Formamida','H—C(=O)—NH₂',6,2,['C','O','N'],[[0,1,2],[0,2,1]]),
+  ...makeResearchType('Acetonitrilo','CH₃—C≡N',6,2,['C','C','N'],[[0,1,1],[1,2,3]]),
+  ...makeResearchType('Glioxal','O=CH—CH=O',6,1,['O','C','C','O'],[[0,1,2],[1,2,1],[2,3,2]]),
+  ...makeResearchType('Ácido oxálico','HO—C(=O)—C(=O)—OH',9,1,['O','C','O','C','O','O'],[[0,1,1],[1,2,2],[1,3,1],[3,4,2],[3,5,1]]),
+  ...makeResearchType('Acetamida','CH₃—C(=O)—NH₂',7,2,['C','C','O','N'],[[0,1,1],[1,2,2],[1,3,1]])
+];
+
+function drawResearchOptions(count=4){
+  return [...RESEARCH_DECK].sort(()=>Math.random()-.5).slice(0,count).map(card=>JSON.parse(JSON.stringify(card)));
+}
 
 const state = {
   room: 'LAB-24', round: 1, active: 0, phase: 'choice',
@@ -28,9 +69,41 @@ const state = {
   ]
 };
 const network = {role:'offline',playerIndex:0,transport:'direct',peer:null,connection:null,socket:null,token:null,connected:false,applyingRemote:false,joinAttempts:0,joinTimer:null,reconnectAttempts:0,manualClose:false};
+const modalHandle = $('#modal-drag-handle');
+const modalClose = $('#close-modal');
+let modalDrag = null;
 
-function starterResearch(){return [{name:'Ácido metanoico',formula:'H—C(=O)—OH',pv:6},{name:'Acetonitrilo',formula:'CH₃—C≡N',pv:6}]}
-function createPlayer(name,color,connected=true){return {name,color,connected,credits:0,pv:0,pollution:0,flasks:[null,null,null],atoms:['C','O','H'],bonds:['—','—','═'],research:starterResearch()}}
+function resetModalPosition(){
+  modal.style.left='';modal.style.top='';modal.style.margin='';modal.style.position='';
+}
+function openModal({locked=false,kind='general'}={}){
+  modal.dataset.locked=locked?'true':'false';modal.dataset.kind=kind;
+  modalClose.hidden=locked;
+  if(!modal.open){resetModalPosition();modal.showModal()}
+}
+function closeModal(force=false){
+  if(modal.dataset.locked==='true'&&!force)return;
+  if(modal.open)modal.close();
+  modal.dataset.locked='false';modal.dataset.kind='';modalClose.hidden=false;resetModalPosition();
+}
+
+modalHandle.addEventListener('pointerdown',event=>{
+  const rect=modal.getBoundingClientRect();
+  modal.style.position='fixed';modal.style.left=rect.left+'px';modal.style.top=rect.top+'px';modal.style.margin='0';
+  modalDrag={pointerId:event.pointerId,offsetX:event.clientX-rect.left,offsetY:event.clientY-rect.top};
+  modalHandle.setPointerCapture(event.pointerId);event.preventDefault();
+});
+modalHandle.addEventListener('pointermove',event=>{
+  if(!modalDrag||modalDrag.pointerId!==event.pointerId)return;
+  const maxLeft=Math.max(0,window.innerWidth-modal.offsetWidth),maxTop=Math.max(0,window.innerHeight-modal.offsetHeight);
+  modal.style.left=Math.min(maxLeft,Math.max(0,event.clientX-modalDrag.offsetX))+'px';
+  modal.style.top=Math.min(maxTop,Math.max(0,event.clientY-modalDrag.offsetY))+'px';
+});
+modalHandle.addEventListener('pointerup',event=>{if(modalDrag&&modalDrag.pointerId===event.pointerId)modalDrag=null});
+modal.addEventListener('cancel',event=>{if(modal.dataset.locked==='true')event.preventDefault()});
+
+function starterResearch(){return []}
+function createPlayer(name,color,connected=true){return {name,color,connected,credits:0,pv:0,pollution:0,flasks:[null,null,null],atoms:['C','O','H'],bonds:['—','—','═'],research:starterResearch(),initialResearchOptions:drawResearchOptions(4),initialResearchDone:false}}
 function localPlayerIndex(){return network.playerIndex}
 function me(){return state.players[localPlayerIndex()]||state.players[0]}
 function myAtoms(){return me().atoms||(me().atoms=[])}
@@ -44,7 +117,7 @@ function roomServerUrl(){if(window.LABCHEM_SERVER_URL)return window.LABCHEM_SERV
 function networkOpen(){return network.transport==='server'?Boolean(network.socket&&network.socket.readyState===WebSocket.OPEN):Boolean(network.connection&&network.connection.open)}
 function sendNetwork(data){if(!networkOpen())return false;if(network.transport==='server')network.socket.send(JSON.stringify({type:'relay',data}));else network.connection.send(data);return true}
 function sendState(){if(network.role==='host'&&networkOpen())sendNetwork({type:'state',state:snapshot()})}
-function applyRemoteState(next){network.applyingRemote=true;Object.keys(state).forEach(k=>delete state[k]);Object.assign(state,JSON.parse(JSON.stringify(next)));persist();lobby.hidden=true;game.hidden=false;render();network.applyingRemote=false}
+function applyRemoteState(next){network.applyingRemote=true;Object.keys(state).forEach(k=>delete state[k]);Object.assign(state,JSON.parse(JSON.stringify(next)));persist();lobby.hidden=true;game.hidden=false;render();network.applyingRemote=false;scheduleInitialResearchChoice()}
 function peerIdForRoom(code){return 'labchem-'+String(code).toLowerCase().replace(/[^a-z0-9-]/g,'')}
 function setLobbyMessage(message,isError=false){const note=$('#connection-note');if(note){note.textContent=message;note.classList.toggle('error',isError)}}
 function destroyNetwork(){network.manualClose=true;clearTimeout(network.joinTimer);network.joinTimer=null;network.joinAttempts=0;network.reconnectAttempts=0;try{if(network.connection)network.connection.close()}catch(error){}try{if(network.peer)network.peer.destroy()}catch(error){}try{if(network.socket)network.socket.close()}catch(error){}network.connection=null;network.peer=null;network.socket=null;network.token=null;network.connected=false;network.manualClose=false}
@@ -94,7 +167,7 @@ function scheduleServerResume(){
 function handleServerMessage(message){
   if(message.type==='room-created'){
     network.playerIndex=0;network.token=message.token;network.reconnectAttempts=0;rememberServerSession();
-    lobby.hidden=true;game.hidden=false;render();persist();toast('Sala creada en el servidor. Compartí el código '+state.room+'.');return;
+    lobby.hidden=true;game.hidden=false;render();persist();scheduleInitialResearchChoice();toast('Sala creada en el servidor. Compartí el código '+state.room+'.');return;
   }
   if(message.type==='room-joined'){
     network.playerIndex=1;network.token=message.token;network.reconnectAttempts=0;rememberServerSession();setLobbyMessage('Conectado. Sincronizando la mesa…');return;
@@ -132,13 +205,13 @@ function connectRoomServer(mode,code){
 
 
 function approvalLabel(kind){
-  return kind==='end-turn'?'FIN DE TURNO':kind==='capture'?'CAPTURA DE MOLÉCULA':'PRODUCTO DE REACCIÓN';
+  return kind==='end-turn'?'FIN DE TURNO':kind==='capture'?'CAPTURA DE MOLÉCULA':kind==='research'?'ENTREGA DE INVESTIGACIÓN':'PRODUCTO DE REACCIÓN';
 }
 function requestOtherApproval(kind,payload){
   if(!network.connected||!networkOpen())return toast('La otra persona debe estar conectada para aprobar.');
   network.pendingApproval={kind,payload};
   content.innerHTML='<div class="approval"><div class="seal">⌛</div><p class="eyebrow">ESPERANDO APROBACIÓN</p><h2>'+approvalLabel(kind)+'</h2><p>La solicitud fue enviada a '+state.players[state.active===0?1:0].name+'. La partida continuará cuando responda.</p></div>';
-  modal.showModal();
+  openModal({kind:'waiting-approval'});
   sendNetwork({type:'approval-request',kind,payload,requester:me().name});
 }
 function showApprovalPrompt(data){
@@ -146,20 +219,23 @@ function showApprovalPrompt(data){
     ?'Revisá las fichas colocadas y las uniones del turno.'
     :data.kind==='capture'
       ?'Revisá la molécula '+data.payload.formula+' antes de que pase al matraz.'
+      :data.kind==='research'
+        ?'Revisá que la molécula '+data.payload.formula+' del matraz coincida con '+data.payload.researchName+'.'
       :'Revisá el producto '+data.payload.formula+' y la conservación de sus '+data.payload.atomCount+' átomos.';
   content.innerHTML='<div class="approval"><div class="seal">?</div><p class="eyebrow">TU DECISIÓN</p><h2>'+approvalLabel(data.kind)+'</h2><p>'+data.requester+' solicita aprobación. '+detail+'</p><div class="approval-actions"><button id="reject-online" class="secondary">Rechazar</button><button id="approve-online" class="primary">Aprobar</button></div></div>';
-  modal.showModal();
-  $('#approve-online').onclick=function(){sendNetwork({type:'approval-response',kind:data.kind,approved:true});modal.close();toast('Aprobación enviada.')};
-  $('#reject-online').onclick=function(){sendNetwork({type:'approval-response',kind:data.kind,approved:false});modal.close();toast('Rechazo enviado.')};
+  openModal({kind:'approval'});
+  $('#approve-online').onclick=function(){sendNetwork({type:'approval-response',kind:data.kind,approved:true});closeModal(true);toast('Aprobación enviada.')};
+  $('#reject-online').onclick=function(){sendNetwork({type:'approval-response',kind:data.kind,approved:false});closeModal(true);toast('Rechazo enviado.')};
 }
 function handleApprovalResponse(data){
   const pending=network.pendingApproval;
   if(!pending||pending.kind!==data.kind)return;
   network.pendingApproval=null;
-  if(!data.approved){modal.close();toast('La otra persona rechazó la solicitud. Podés corregirla y volver a enviarla.');return}
+  if(!data.approved){closeModal(true);toast('La otra persona rechazó la solicitud. Podés corregirla y volver a enviarla.');return}
   if(data.kind==='end-turn')finalizeEndTurn();
   if(data.kind==='capture')finalizeCapture(pending.payload.key,pending.payload.flaskIndex);
   if(data.kind==='reaction')finalizeReaction();
+  if(data.kind==='research')finalizeResearch(pending.payload.researchIndex,pending.payload.flaskIndex);
 }
 
 function createOnlineRoom(){
@@ -170,7 +246,7 @@ function createOnlineRoom(){
   if(useRoomServer()){connectRoomServer('create',state.room);return}
   network.transport='direct';
   const peer=new Peer(peerIdForRoom(state.room),{debug:1});network.peer=peer;
-  peer.on('open',function(){lobby.hidden=true;game.hidden=false;render();persist();toast('Sala creada. Compartí el código '+state.room+' y mantené esta pestaña abierta.')});
+  peer.on('open',function(){lobby.hidden=true;game.hidden=false;render();persist();scheduleInitialResearchChoice();toast('Sala creada. Compartí el código '+state.room+' y mantené esta pestaña abierta.')});
   peer.on('connection',function(connection){if(network.connection&&network.connection.open){connection.close();return}attachConnection(connection)});
   peer.on('error',function(error){setLobbyMessage(error&&error.type==='unavailable-id'?'Ese código ya está ocupado. Probá crear otra sala.':'No se pudo abrir la sala.',true);toast('No se pudo iniciar la conexión online.')});
 }
@@ -197,6 +273,40 @@ function save(){persist();if(network.applyingRemote||!network.connected||!networ
 function randomOf(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 function roomCode(){return 'LAB-'+Math.floor(1000+Math.random()*9000);}
 function toast(message){ const t=$('#toast'); t.textContent=message; t.classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>t.classList.remove('show'),2300); }
+
+function normalizeInitialResearch(player){
+  if(typeof player.initialResearchDone==='boolean')return;
+  player.research=Array.isArray(player.research)?player.research:[];
+  player.initialResearchDone=player.research.length>=2;
+  player.initialResearchOptions=player.initialResearchDone?[]:drawResearchOptions(4);
+}
+
+function scheduleInitialResearchChoice(){
+  setTimeout(()=>{if(!game.hidden)showInitialResearchChoice()},0);
+}
+
+function showInitialResearchChoice(){
+  const player=me();normalizeInitialResearch(player);
+  if(player.initialResearchDone)return;
+  if(!Array.isArray(player.initialResearchOptions)||player.initialResearchOptions.length!==4)player.initialResearchOptions=drawResearchOptions(4);
+  if(modal.open&&modal.dataset.kind==='initial-research')return;
+  let selected=[];
+  content.innerHTML=`<div class="modal-body initial-research-choice"><p class="eyebrow">PREPARACIÓN INICIAL · ELEGÍ 2 DE 4</p><h2>Elegí tus investigaciones</h2><p>Podés arrastrar esta ventana para mirar los cuatro átomos iniciales antes de decidir.</p><div class="research-list initial-research-list">${player.initialResearchOptions.map((card,index)=>`<button class="research-card initial-research-card" data-choice="${index}"><span><b>${card.name}</b><small>${card.formula}</small></span><em>${card.pv} PV</em></button>`).join('')}</div><p id="initial-research-status" class="selection-status">Seleccionaste 0 de 2.</p><button id="confirm-initial-research" class="primary modal-primary" disabled>Quedarme con estas 2</button></div>`;
+  openModal({locked:true,kind:'initial-research'});
+  document.querySelectorAll('.initial-research-card').forEach(button=>button.onclick=()=>{
+    const index=+button.dataset.choice;
+    selected=selected.includes(index)?selected.filter(value=>value!==index):selected.length<2?[...selected,index]:selected;
+    document.querySelectorAll('.initial-research-card').forEach(card=>card.classList.toggle('selected',selected.includes(+card.dataset.choice)));
+    $('#initial-research-status').textContent=`Seleccionaste ${selected.length} de 2.`;
+    $('#confirm-initial-research').disabled=selected.length!==2;
+  });
+  $('#confirm-initial-research').onclick=()=>{
+    if(selected.length!==2)return;
+    player.research=selected.map(index=>player.initialResearchOptions[index]);
+    player.initialResearchOptions=[];player.initialResearchDone=true;
+    closeModal(true);render();save();toast('Investigaciones iniciales elegidas.');
+  };
+}
 
 function enterRoom(code){if(code)joinOnlineRoom();else createOnlineRoom();}
 
@@ -489,15 +599,11 @@ function drawAtoms(){
 }
 
 function takeResearch(){
-  const options=[
-    {name:'Formamida',formula:'H—C(=O)—NH₂',pv:6},
-    {name:'Propanona',formula:'CH₃—C(=O)—CH₃',pv:7},
-    {name:'Metanimina',formula:'H₂C=NH',pv:5}
-  ];
+  const options=drawResearchOptions(3);
   content.innerHTML=`<div class="modal-body"><p class="eyebrow">ELEGÍ 1 DE 3</p><h2>Nueva investigación</h2><p>Las otras dos volverán al descarte.</p><div class="research-list">${options.map((r,i)=>`<button class="research-card choose-research" data-choice="${i}"><span><b>${r.name}</b><small>${r.formula}</small></span><em>${r.pv} PV</em></button>`).join('')}</div></div>`;
-  modal.showModal();
+  openModal({kind:'new-research'});
   document.querySelectorAll('.choose-research').forEach(btn=>btn.addEventListener('click',()=>{
-    myResearch().push(options[+btn.dataset.choice]); state.phase='actions'; modal.close(); render(); save(); toast('Investigación incorporada. No robás átomos este turno.');
+    myResearch().push(options[+btn.dataset.choice]); state.phase='actions'; closeModal(true); render(); save(); toast('Investigación incorporada. No robás átomos este turno.');
   }));
 }
 
@@ -511,7 +617,7 @@ function endTurn(){
 }
 
 function finalizeEndTurn(){
-  modal.close();
+  closeModal(true);
   Object.values(state.structures).forEach(s=>{s.atoms.forEach(a=>a.pending=false);s.bonds.forEach(b=>b.pending=false);s.pending=0});
   state.movingToken=null;
   state.active=(state.active+1)%state.players.length;
@@ -552,7 +658,7 @@ function showFlasks(index){
     const label=empty?'Vacío':typeof f==='string'?f:moleculeFormula(f);
     return '<div class="flask-card '+(empty?'empty-flask':'occupied-flask')+'"><small>MATRAZ '+(i+1)+'</small><div class="mini-formula">'+label+'</div>'+(own&&!empty?'<button class="flask-react-button" data-flask="'+i+'">Usar en reacción</button>':'')+'</div>';
   }).join('')+'</div>'+(own?'<button id="reaction-from-flasks" class="primary modal-primary">Seleccionar 1 o 2 reactivos <span>→</span></button>':'')+'</div>';
-  modal.showModal();
+  openModal({kind:'flasks'});
   if(own){
     document.querySelectorAll('.flask-react-button').forEach(button=>button.onclick=()=>openReactionSelector([+button.dataset.flask]));
     const launch=$('#reaction-from-flasks');if(launch)launch.onclick=()=>openReactionSelector();
@@ -564,7 +670,7 @@ function requestCapture(key){
   if(!structureReady(structure))return toast('La estructura todavía no está conectada para solicitar captura.');
   const empty=me().flasks.map((f,i)=>(!f||f==='vacío')?i:null).filter(i=>i!==null);
   content.innerHTML='<div class="modal-body"><p class="eyebrow">CAPTURA DE MOLÉCULA</p><h2>Elegí un matraz vacío</h2><p>Los demás jugadores aprobarán la estructura antes de confirmar la captura.</p><div class="flask-grid">'+me().flasks.map((f,i)=>'<button class="flask-card capture-choice" data-flask="'+i+'" '+(empty.includes(i)?'':'disabled')+'><small>MATRAZ '+(i+1)+'</small><b>'+(empty.includes(i)?'Disponible':'Ocupado')+'</b></button>').join('')+'</div></div>';
-  modal.showModal();
+  openModal({kind:'capture'});
   document.querySelectorAll('.capture-choice:not([disabled])').forEach(button=>button.onclick=()=>approveCapture(key,+button.dataset.flask));
 }
 
@@ -577,16 +683,16 @@ function finalizeCapture(key,flaskIndex){
   const structure=state.structures[key];
   me().flasks[flaskIndex]=cloneMolecule(structure);
   state.structures[key]={atoms:[],bonds:[],pending:0,captured:true};
-  state.movingToken=null;modal.close();render();save();toast('Molécula capturada en el matraz '+(flaskIndex+1)+'.');
+  state.movingToken=null;closeModal(true);render();save();toast('Molécula capturada en el matraz '+(flaskIndex+1)+'.');
 }
 
 function openReactionSelector(preselected=[]){
   const occupied=me().flasks.map((f,i)=>(f&&f!=='vacío')?i:null).filter(i=>i!==null);
   if(!occupied.length){
-    content.innerHTML='<div class="approval"><div class="seal">⚗</div><h2>No hay reactivos</h2><p>Capturá primero una molécula en uno de tus matraces.</p></div>';modal.showModal();return;
+    content.innerHTML='<div class="approval"><div class="seal">⚗</div><h2>No hay reactivos</h2><p>Capturá primero una molécula en uno de tus matraces.</p></div>';openModal({kind:'reaction'});return;
   }
   content.innerHTML='<div class="modal-body"><p class="eyebrow">REACCIÓN GRATUITA</p><h2>Elegí 1 o 2 reactivos</h2><p>Podés usar una molécula o fusionar dos. Sus átomos se conservarán.</p><div class="reaction-options">'+occupied.map(i=>'<label class="reaction-option"><input type="checkbox" value="'+i+'" '+(preselected.includes(i)?'checked':'')+'><span><b>Matraz '+(i+1)+'</b><small>'+moleculeFormula(me().flasks[i])+'</small></span></label>').join('')+'</div><button id="start-reaction" class="primary modal-primary">Abrir editor de reacción <span>→</span></button></div>';
-  modal.showModal();
+  openModal({kind:'reaction'});
   $('#start-reaction').onclick=()=>{
     const selected=[...document.querySelectorAll('.reaction-option input:checked')].map(i=>+i.value);
     if(selected.length<1||selected.length>2)return toast('Elegí uno o dos matraces.');
@@ -651,17 +757,88 @@ function finalizeReaction(){
   const [target,...consumed]=state.reaction.sourceIndices;
   me().flasks[target]=cloneMolecule(structure);
   consumed.forEach(i=>me().flasks[i]=null);
-  state.reaction=null;modal.close();render();save();toast('Reacción aprobada y producto guardado.');
+  state.reaction=null;closeModal(true);render();save();toast('Reacción aprobada y producto guardado.');
 }
 
+function researchTarget(card){return card.target||(RESEARCH_DECK.find(item=>item.name===card.name)||{}).target||null}
+
+function moleculeGraph(molecule){
+  if(!molecule||!Array.isArray(molecule.atoms)||!Array.isArray(molecule.bonds))return null;
+  const elements=molecule.atoms.map(atom=>atom.element),edges=[];
+  molecule.bonds.forEach(bond=>{
+    const [dr,dc]=bondVector(bond.angle),first=molecule.atoms.findIndex(atom=>atom.row===bond.row-dr&&atom.col===bond.col-dc),second=molecule.atoms.findIndex(atom=>atom.row===bond.row+dr&&atom.col===bond.col+dc);
+    if(first>=0&&second>=0)edges.push([first,second,bondOrder(bond.type)]);
+  });
+  return {elements,edges};
+}
+
+function graphMatrix(graph){
+  const matrix=Array.from({length:graph.elements.length},()=>Array(graph.elements.length).fill(0));
+  graph.edges.forEach(([a,b,order])=>{matrix[a][b]=order;matrix[b][a]=order});return matrix;
+}
+
+function graphsMatch(target,actual){
+  if(!target||!actual||target.elements.length!==actual.elements.length||target.edges.length!==actual.edges.length)return false;
+  const targetElements=[...target.elements].sort().join(''),actualElements=[...actual.elements].sort().join('');if(targetElements!==actualElements)return false;
+  const targetMatrix=graphMatrix(target),actualMatrix=graphMatrix(actual);
+  const profile=(graph,matrix,index)=>graph.elements[index]+'|'+matrix[index].filter(Boolean).sort((a,b)=>a-b).join(',');
+  const order=target.elements.map((_,index)=>index).sort((a,b)=>profile(target,targetMatrix,b).length-profile(target,targetMatrix,a).length);
+  const mapping=Array(target.elements.length).fill(-1),used=new Set();
+  function search(position){
+    if(position===order.length)return true;
+    const targetIndex=order[position],wanted=profile(target,targetMatrix,targetIndex);
+    for(let actualIndex=0;actualIndex<actual.elements.length;actualIndex++){
+      if(used.has(actualIndex)||profile(actual,actualMatrix,actualIndex)!==wanted)continue;
+      let compatible=true;
+      for(let other=0;other<mapping.length;other++)if(mapping[other]>=0&&targetMatrix[targetIndex][other]!==actualMatrix[actualIndex][mapping[other]]){compatible=false;break}
+      if(!compatible)continue;
+      mapping[targetIndex]=actualIndex;used.add(actualIndex);
+      if(search(position+1))return true;
+      mapping[targetIndex]=-1;used.delete(actualIndex);
+    }
+    return false;
+  }
+  return search(0);
+}
+
+function researchMatchesMolecule(card,molecule){return graphsMatch(researchTarget(card),moleculeGraph(molecule))}
+
 function showResearch(){
-  content.innerHTML=`<div class="modal-body"><p class="eyebrow">INFORMACIÓN PRIVADA</p><h2>Mis investigaciones</h2><p>Solo vos podés ver estas cartas hasta que solicites completarlas.</p><div class="research-list">${myResearch().map(r=>`<div class="research-card"><span><b>${r.name}</b><small>${r.formula}</small></span><em>${r.pv} PV</em></div>`).join('')}</div></div>`;
-  modal.showModal();
+  const cards=myResearch();
+  content.innerHTML=`<div class="modal-body"><p class="eyebrow">INFORMACIÓN PRIVADA</p><h2>Mis investigaciones</h2><p>Elegí una carta y entregá desde un matraz la molécula correspondiente.</p><div class="research-list">${cards.length?cards.map((card,index)=>`<div class="research-card research-delivery-card"><span><b>${card.name}</b><small>${card.formula}</small></span><em>${card.pv} PV</em><button class="research-deliver-button" data-research="${index}">Entregar desde un matraz</button></div>`).join(''):'<div class="empty-research">No tenés investigaciones pendientes.</div>'}</div></div>`;
+  openModal({kind:'research'});
+  document.querySelectorAll('.research-deliver-button').forEach(button=>button.onclick=()=>chooseResearchFlask(+button.dataset.research));
+}
+
+function chooseResearchFlask(researchIndex){
+  const card=myResearch()[researchIndex];if(!card)return;
+  const occupied=me().flasks.map((molecule,index)=>(molecule&&molecule!=='vacío')?index:null).filter(index=>index!==null);
+  content.innerHTML=`<div class="modal-body"><p class="eyebrow">ENTREGA DE INVESTIGACIÓN</p><h2>${card.name}</h2><p>Elegí el matraz que contiene <b>${card.formula}</b>. La molécula se consume al completar la investigación.</p><div class="flask-grid research-flask-grid">${me().flasks.map((molecule,index)=>{const empty=!molecule||molecule==='vacío';return `<button class="flask-card research-flask-choice ${!empty&&researchMatchesMolecule(card,molecule)?'matches-research':''}" data-flask="${index}" ${empty?'disabled':''}><small>MATRAZ ${index+1}</small><div class="mini-formula">${empty?'Vacío':moleculeFormula(molecule)}</div><b>${empty?'Sin molécula':'Elegir matraz'}</b></button>`}).join('')}</div><p id="research-match-note" class="research-match-note">${occupied.length?'La coincidencia será comprobada antes de pedir aprobación.':'Primero capturá una molécula en un matraz.'}</p><button id="back-to-research" class="secondary modal-secondary">Volver a mis investigaciones</button></div>`;
+  openModal({kind:'research-flask'});
+  document.querySelectorAll('.research-flask-choice:not([disabled])').forEach(button=>button.onclick=()=>submitResearchMolecule(researchIndex,+button.dataset.flask));
+  $('#back-to-research').onclick=showResearch;
+}
+
+function submitResearchMolecule(researchIndex,flaskIndex){
+  const card=myResearch()[researchIndex],molecule=me().flasks[flaskIndex];
+  if(!card||!molecule)return;
+  if(!researchMatchesMolecule(card,molecule)){
+    const note=$('#research-match-note');if(note){note.textContent='Esa molécula no coincide con los átomos y enlaces de '+card.formula+'.';note.classList.add('error')}
+    return toast('La molécula elegida no coincide con la investigación.');
+  }
+  requestOtherApproval('research',{researchIndex,flaskIndex,formula:moleculeFormula(molecule),researchName:card.name,researchFormula:card.formula,pv:card.pv});
+}
+
+function finalizeResearch(researchIndex,flaskIndex){
+  const card=myResearch()[researchIndex],molecule=me().flasks[flaskIndex];
+  if(!card||!molecule||!researchMatchesMolecule(card,molecule)){closeModal(true);return toast('La investigación ya no puede completarse con ese matraz.')}
+  me().flasks[flaskIndex]=null;myResearch().splice(researchIndex,1);me().pv+=card.pv;
+  closeModal(true);render();save();toast(card.name+' completada: +'+card.pv+' PV.');
 }
 
 function requestSale(name){
   content.innerHTML=`<div class="approval"><div class="seal">⌛</div><p class="eyebrow">SOLICITUD DE APROBACIÓN</p><h2>${name}</h2><p>Primero deberás elegir una molécula válida de tus matraces. Luego todos los demás jugadores aprobarán la coincidencia.</p><button id="understood" class="primary">Entendido <span>→</span></button></div>`;
-  modal.showModal(); $('#understood').addEventListener('click',()=>modal.close());
+  openModal({kind:'commercial'}); $('#understood').addEventListener('click',()=>closeModal(true));
 }
 
 $('#create-room').addEventListener('click',createOnlineRoom);
@@ -675,10 +852,10 @@ $('#open-flasks').addEventListener('click',()=>showFlasks(localPlayerIndex()));
 $('#open-flasks-main').addEventListener('click',()=>showFlasks(localPlayerIndex()));
 $('#open-reaction').addEventListener('click',()=>openReactionSelector());
 $('#remove-token').addEventListener('click',removeSelectedToken);
-$('#close-modal').addEventListener('click',()=>modal.close());
+$('#close-modal').addEventListener('click',()=>closeModal());
 $('#copy-code').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(state.room);toast('Código copiado.');}catch{toast(`Código: ${state.room}`)}});
 document.querySelectorAll('.sell-button').forEach(b=>b.addEventListener('click',()=>requestSale(b.dataset.demand)));
-modal.addEventListener('click',(e)=>{if(e.target===modal)modal.close();});
+modal.addEventListener('click',(e)=>{if(e.target===modal)closeModal();});
 
 render();
 resumeSavedRoom();

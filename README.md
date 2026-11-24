@@ -24,7 +24,11 @@ El servidor mantiene el estado más reciente de cada sala y permite que un jugad
 - Límite de colocación: un átomo por estructura y una colocación doble por turno.
 - Matraces personales y captura de moléculas.
 - Editor de reacciones.
-- Investigaciones y objetivos comerciales.
+- Mazo experimental de 30 investigaciones del reglamento US v3.8.
+- Selección inicial privada: cada jugador recibe cuatro investigaciones al azar y conserva dos.
+- Entrega de investigaciones desde los matraces, con validación estructural, aprobación y puntuación.
+- Ventanas movibles para consultar el tablero durante decisiones y aprobaciones.
+- Objetivos comerciales.
 - Economía, puntos de victoria y contaminación.
 
 ## Ejecutar frontend y backend localmente
@@ -37,6 +41,12 @@ npm start
 ```
 
 Después visitá `http://localhost:4175`. El mismo proceso sirve el juego y acepta las conexiones WebSocket en `/ws`. El estado del servicio se puede consultar en `/health`.
+
+Para ejecutar las comprobaciones automáticas del mazo y la validación molecular:
+
+```bash
+npm test
+```
 
 ## Hospedarlo
 
